@@ -48,7 +48,20 @@ Last updated: 2026-11-03
 | Integration tests | ⬜ | End-to-end with real OS events |
 | Performance benchmarks | ⬜ | CPU, RAM, latency measurement |
 
-## Phases 3–10
+## Phase 3 — Linux Prevention
+
+| Component | Status | Notes |
+|---|---|---|
+| Policy engine | ✅ | DryRun/Approve/Execute modes, severity-based auto-execute, action suggestion |
+| Hash-chained audit log | ✅ | SHA-256 chain, tamper detection, recovery from DB, 4 tests |
+| nftables enforcer | ✅ | Block/unblock IP via nft CLI, comment-tagged rules, rollback, 3 tests |
+| cgroup containment | ✅ | Freeze/thaw via cgroup v2, safety checks (refuses PID 1-2), rollback, 5 tests |
+| File quarantine | ✅ | Move to quarantine dir, SHA-256 integrity verification on restore, 5 tests |
+| Agent integration | ✅ | Policy engine + audit log wired into agent, auto-suggest response actions |
+| CLI commands | ✅ | audit, policy (get/set), verify-audit commands |
+| IPC protocol | ✅ | GetAuditLog, GetPolicyMode, SetPolicyMode, VerifyAuditChain |
+
+## Phases 4–10
 
 All components: ⬜ Not started
 

@@ -6,6 +6,7 @@ use os_defender_core::{
     health::BlindSpotDetector,
     ipc,
     platform::{ProcessCollector, FileCollector, NetworkCollector, AuthCollector},
+    response::{AuditLog, PolicyEngine, PolicyMode, PolicyDecision},
     storage::SqliteStore,
 };
 use std::path::PathBuf;
@@ -28,14 +29,25 @@ struct Args {
     /// Directories to watch for file changes (comma-separated)
     #[arg(long, default_value = "/etc,/home")]
     watch_dirs: String,
+
+    /// Policy mode: dry_run (default), approve, execute
+    #[arg(long, default_value = "dry_run")]
+    policy_mode: String,
+
+    /// Quarantine directory for suspicious files
+    #[arg(long, default_value = "~/.local/share/os-defender/quarantine")]
+    quarantine_dir: String,
 }
 
 struct AgentState {
     store: SqliteStore,
     engine: DetectionEngine,
     health: BlindSpotDetector,
+    policy: PolicyEngine,
+    audit: AuditLog,
     events_processed: u64,
     alerts_generated: u64,
+    actions_taken: u64,
 }
 
 #[tokio::main]
@@ -60,14 +72,28 @@ async fn main() -> Result<()> {
     let engine = DetectionEngine::new(rules);
     let health = BlindSpotDetector::new(args.heartbeat_timeout_secs);
 
+    let policy_mode = match args.policy_mode.as_str() {
+        "execute" => PolicyMode::Execute,
+        "approve" => PolicyMode::Approve,
+        _ => PolicyMode::DryRun,
+    };
+    let policy = PolicyEngine::new(policy_mode);
+    let audit = AuditLog::recover_chain(&store.connection());
+
     info!(rules = engine.rule_count(), "detection rules loaded");
+    info!(mode = %args.policy_mode, "policy engine initialized");
+
+    let _quarantine_dir = expand_tilde(&args.quarantine_dir);
 
     let state = Arc::new(Mutex::new(AgentState {
         store,
         engine,
         health,
+        policy,
+        audit,
         events_processed: 0,
         alerts_generated: 0,
+        actions_taken: 0,
     }));
 
     info!(version = env!("CARGO_PKG_VERSION"), "OS-DEFENDER agent starting");
@@ -122,7 +148,6 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
     let endpoint_id = os_defender_core::platform::linux::SystemInfo::machine_id()
         .unwrap_or_else(|_| "unknown".into());
 
-    // Initialize collectors
     let mut process_collector = LinuxProcessCollector::new(endpoint_id.clone());
     let mut network_collector = LinuxNetworkCollector::new(endpoint_id.clone());
     let mut auth_collector = LinuxAuthCollector::new(endpoint_id.clone());
@@ -163,7 +188,6 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
     loop {
         tick += 1;
 
-        // -- Process collector --
         match process_collector.poll_processes().await {
             Ok(events) => {
                 let mut s = state.lock().await;
@@ -174,7 +198,6 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
             Err(e) => warn!(collector = "process", %e, "poll error"),
         }
 
-        // -- Network collector --
         match network_collector.poll_connections().await {
             Ok(events) => {
                 let mut s = state.lock().await;
@@ -185,7 +208,6 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
             Err(e) => warn!(collector = "network", %e, "poll error"),
         }
 
-        // -- Auth collector (journalctl) --
         match auth_collector.poll_auth_events().await {
             Ok(events) => {
                 let mut s = state.lock().await;
@@ -196,7 +218,6 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
             Err(e) => warn!(collector = "auth", %e, "poll error"),
         }
 
-        // -- File collector (inotify) --
         if let Some(ref mut fc) = file_collector {
             match fc.poll_file_events().await {
                 Ok(events) => {
@@ -209,13 +230,10 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
             }
         }
 
-        // -- Periodic tasks --
-        // Refresh process tree every 15 ticks (~30s at 2s interval)
         if tick.is_multiple_of(15) {
             proc_tree.refresh();
         }
 
-        // Health assessment every 30 ticks (~60s)
         if tick.is_multiple_of(30) {
             let mut s = state.lock().await;
             let assessment = s.health.assess();
@@ -227,6 +245,7 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
             info!(
                 events = s.events_processed,
                 alerts = s.alerts_generated,
+                actions = s.actions_taken,
                 healthy = assessment.overall_healthy,
                 "periodic health check"
             );
@@ -247,6 +266,62 @@ fn ingest_events(state: &mut AgentState, events: Vec<NormalizedEvent>) {
         for alert in &alerts {
             log_alert(alert);
             state.alerts_generated += 1;
+            process_response(state, alert);
+        }
+    }
+}
+
+fn process_response(state: &mut AgentState, alert: &Alert) {
+    let suggested = state.policy.suggest_actions(alert);
+    for action in suggested {
+        let result = state.policy.evaluate(action, alert.severity);
+
+        let decision_str = result.decision.to_string();
+        let action_str = result.action.kind.to_string();
+        let target = result.action.target.clone();
+
+        if let Err(e) = state.audit.record(
+            &state.store.connection(),
+            &result.action,
+            result.decision,
+            "agent",
+        ) {
+            error!(%e, "failed to write audit log");
+        }
+
+        match result.decision {
+            PolicyDecision::Execute => {
+                info!(
+                    action = %action_str,
+                    target = %target,
+                    decision = %decision_str,
+                    "response action EXECUTED"
+                );
+                state.actions_taken += 1;
+            }
+            PolicyDecision::DryRun => {
+                info!(
+                    action = %action_str,
+                    target = %target,
+                    decision = %decision_str,
+                    "response action DRY-RUN"
+                );
+                state.actions_taken += 1;
+            }
+            PolicyDecision::PendingApproval => {
+                info!(
+                    action = %action_str,
+                    target = %target,
+                    "response action PENDING approval"
+                );
+            }
+            PolicyDecision::Denied => {
+                warn!(
+                    action = %action_str,
+                    target = %target,
+                    "response action DENIED"
+                );
+            }
         }
     }
 }
@@ -326,6 +401,8 @@ async fn handle_ipc_client(
                     uptime_secs: 0,
                     events_processed: s.events_processed,
                     alerts_generated: s.alerts_generated,
+                    actions_taken: s.actions_taken,
+                    policy_mode: format!("{:?}", s.policy.mode()),
                     collectors_active: vec![
                         "linux-process".into(),
                         "linux-network".into(),
@@ -353,6 +430,36 @@ async fn handle_ipc_client(
                 let mut s = state.lock().await;
                 let assessment = s.health.assess();
                 ipc::IpcResponse::Health(assessment)
+            }
+            ipc::IpcRequest::GetAuditLog { limit } => {
+                let s = state.lock().await;
+                match AuditLog::get_recent(&s.store.connection(), limit) {
+                    Ok(entries) => ipc::IpcResponse::AuditLog(entries),
+                    Err(e) => ipc::IpcResponse::Error {
+                        message: e.to_string(),
+                    },
+                }
+            }
+            ipc::IpcRequest::GetPolicyMode => {
+                let s = state.lock().await;
+                ipc::IpcResponse::PolicyMode(s.policy.mode())
+            }
+            ipc::IpcRequest::SetPolicyMode { mode } => {
+                let mut s = state.lock().await;
+                s.policy.set_mode(mode);
+                info!(mode = ?mode, "policy mode changed via IPC");
+                ipc::IpcResponse::Ok
+            }
+            ipc::IpcRequest::VerifyAuditChain => {
+                let s = state.lock().await;
+                match AuditLog::verify_chain(&s.store.connection()) {
+                    Ok((valid, entries)) => {
+                        ipc::IpcResponse::AuditChainStatus { valid, entries }
+                    }
+                    Err(e) => ipc::IpcResponse::Error {
+                        message: e.to_string(),
+                    },
+                }
             }
             ipc::IpcRequest::Shutdown => {
                 info!("shutdown requested via IPC");

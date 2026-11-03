@@ -142,6 +142,10 @@ impl SqliteStore {
         Ok(events)
     }
 
+    pub fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+
     pub fn event_count(&self) -> Result<u64> {
         let conn = self.conn.lock().unwrap();
         let count: u64 = conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;

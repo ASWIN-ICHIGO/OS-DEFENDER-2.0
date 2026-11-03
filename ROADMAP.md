@@ -34,15 +34,17 @@
 - [ ] End-to-end integration tests with real OS events
 - [ ] Performance benchmarks (CPU, RAM, latency)
 
-## Phase 3 — Linux Prevention
-- [ ] nftables integration for network blocking
-- [ ] fanotify for file access control decisions
-- [ ] Process containment (cgroups freeze, not just SIGSTOP)
-- [ ] Policy engine with dry-run/approve/execute workflow
-- [ ] Hash-chained audit log for all response actions
-- [ ] File quarantine with SHA-256 integrity verification
-- [ ] Rollback mechanisms for all enforcement actions
-- [ ] Verify actual OS enforcement in isolated tests
+## Phase 3 — Linux Prevention ✅
+- [x] Policy engine with dry-run/approve/execute workflow (severity-based auto-execute)
+- [x] Hash-chained audit log with SHA-256 tamper detection
+- [x] nftables integration for network blocking (add/remove rules, comment-tagged)
+- [x] Process containment via cgroup v2 freeze/thaw (safety: refuses PID ≤2)
+- [x] File quarantine with SHA-256 integrity verification on restore
+- [x] Rollback mechanisms for all enforcement actions (token-based)
+- [x] Agent integration: alert → suggest actions → policy decision → audit log
+- [x] CLI: audit log viewer, policy mode get/set, audit chain verification
+- [ ] fanotify for file access control decisions (deferred — requires CAP_SYS_ADMIN)
+- [ ] OS enforcement verification in isolated VMs
 
 ## Phase 4 — Windows Protection
 - [ ] Windows service architecture

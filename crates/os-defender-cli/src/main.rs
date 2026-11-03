@@ -22,6 +22,19 @@ enum Commands {
     },
     /// Show sensor health and visibility
     Health,
+    /// Show recent audit log entries
+    Audit {
+        #[arg(short, long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Show or change policy mode
+    Policy {
+        /// Set mode: dry_run, approve, execute
+        #[arg(long)]
+        set: Option<String>,
+    },
+    /// Verify audit log hash chain integrity
+    VerifyAudit,
     /// Request agent shutdown
     Shutdown,
 }
@@ -30,10 +43,21 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let request = match cli.command {
+    let request = match &cli.command {
         Commands::Status => ipc::IpcRequest::Status,
-        Commands::Events { limit } => ipc::IpcRequest::GetEvents { limit },
+        Commands::Events { limit } => ipc::IpcRequest::GetEvents { limit: *limit },
         Commands::Health => ipc::IpcRequest::GetHealth,
+        Commands::Audit { limit } => ipc::IpcRequest::GetAuditLog { limit: *limit },
+        Commands::Policy { set: None } => ipc::IpcRequest::GetPolicyMode,
+        Commands::Policy { set: Some(mode) } => {
+            let m = match mode.as_str() {
+                "execute" => os_defender_core::response::PolicyMode::Execute,
+                "approve" => os_defender_core::response::PolicyMode::Approve,
+                _ => os_defender_core::response::PolicyMode::DryRun,
+            };
+            ipc::IpcRequest::SetPolicyMode { mode: m }
+        }
+        Commands::VerifyAudit => ipc::IpcRequest::VerifyAuditChain,
         Commands::Shutdown => ipc::IpcRequest::Shutdown,
     };
 
@@ -65,8 +89,10 @@ fn print_response(response: &ipc::IpcResponse) {
         ipc::IpcResponse::Status(status) => {
             println!("OS-DEFENDER Agent v{}", status.version);
             println!("  Running:          {}", status.running);
+            println!("  Policy mode:      {}", status.policy_mode);
             println!("  Events processed: {}", status.events_processed);
             println!("  Alerts generated: {}", status.alerts_generated);
+            println!("  Actions taken:    {}", status.actions_taken);
             println!("  Active collectors: {}", status.collectors_active.join(", "));
         }
         ipc::IpcResponse::Events(events) => {
@@ -111,6 +137,32 @@ fn print_response(response: &ipc::IpcResponse) {
                 }
             }
             println!("\n{}", assessment.caveat);
+        }
+        ipc::IpcResponse::AuditLog(entries) => {
+            if entries.is_empty() {
+                println!("No audit entries.");
+            } else {
+                for entry in entries {
+                    println!(
+                        "[{}] {} {} → {} ({})",
+                        entry.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                        entry.decision,
+                        entry.action,
+                        entry.target,
+                        entry.reason,
+                    );
+                }
+            }
+        }
+        ipc::IpcResponse::PolicyMode(mode) => {
+            println!("Policy mode: {mode:?}");
+        }
+        ipc::IpcResponse::AuditChainStatus { valid, entries } => {
+            if *valid {
+                println!("Audit chain: VALID ({entries} entries verified)");
+            } else {
+                println!("Audit chain: TAMPERED (break detected at entry ~{entries})");
+            }
         }
         ipc::IpcResponse::Ok => println!("OK"),
         ipc::IpcResponse::Error { message } => {
