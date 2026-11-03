@@ -1,0 +1,46 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Python AI layer
+ai/__pycache__/
+ai/.venv/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Node / Tauri
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.directory
+Thumbs.db
+
+# Data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.key
+data/*.jsonl
+
+# Logs
+*.log
+
+# Build artifacts
+*.deb
+*.rpm
+*.msi
+*.exe
+*.AppImage

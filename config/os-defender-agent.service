@@ -1,0 +1,21 @@
+[Unit]
+Description=OS-DEFENDER Protection Agent
+After=network.target
+Documentation=https://github.com/ASWIN-ICHIGO/os-defender-2.0
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/os-defender-agent
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Security hardening
+NoNewPrivileges=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/os-defender
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

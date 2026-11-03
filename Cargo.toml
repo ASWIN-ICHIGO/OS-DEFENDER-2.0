@@ -1,0 +1,32 @@
+[workspace]
+members = [
+    "crates/os-defender-core",
+    "crates/os-defender-agent",
+    "crates/os-defender-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "2.0.0-alpha.1"
+edition = "2024"
+authors = ["Aswin <caswin548@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/ASWIN-ICHIGO/os-defender-2.0"
+description = "Offline-first AI-powered cross-platform endpoint detection, prevention and response"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.44", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+thiserror = "2.0"
+anyhow = "1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+nix = { version = "0.29", features = ["signal", "process", "fs", "net", "user"] }
+libc = "0.2"
+sha2 = "0.10"
+hex = "0.4"
+clap = { version = "4.5", features = ["derive"] }
