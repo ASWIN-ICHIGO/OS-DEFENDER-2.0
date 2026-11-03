@@ -4,6 +4,9 @@ members = [
     "crates/os-defender-agent",
     "crates/os-defender-cli",
 ]
+exclude = [
+    "desktop/src-tauri",
+]
 resolver = "2"
 
 [workspace.package]

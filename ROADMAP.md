@@ -94,15 +94,18 @@
 - [ ] PDF report generation (requires additional dependency)
 - [ ] Windows persistence scanner testing on real Windows
 
-## Phase 8 — Desktop Application
-- [ ] Tauri project setup
-- [ ] React + TypeScript UI framework
-- [ ] Authenticated IPC to agent
-- [ ] 22 navigation sections
-- [ ] Dark graphite professional theme
-- [ ] Real-time event visualization
-- [ ] Linux installer (.deb, AppImage)
-- [ ] Windows installer (.msi)
+## Phase 8 — Desktop Application ✅
+- [x] Tauri v2 project setup (Rust backend, Vite + React frontend)
+- [x] React 18 + TypeScript UI framework with Vite bundler
+- [x] IPC bridge to agent via Unix domain socket (13 Tauri commands)
+- [x] 22 navigation sections: Dashboard, Alerts, Process Explorer, File Monitor, Network Monitor, Auth Events, Detection Rules, Enforcement, Audit Log, AI Engine, Ransomware Defense, Persistence Scanner, File Intelligence, Threat Hunting, Digital Forensics, Security Posture, Tamper Protection, System Health, Command Center, Settings, About
+- [x] Dark graphite professional SOC theme (40+ CSS custom properties)
+- [x] Real-time event visualization with auto-polling (3–10s intervals)
+- [x] Collapsible sidebar with 6 grouped sections
+- [x] Top bar with live agent status, event/alert counts, policy mode
+- [x] Command Center terminal with 12 interactive commands
+- [ ] Linux installer (.deb, AppImage) — requires Node.js + Tauri CLI
+- [ ] Windows installer (.msi) — requires Windows build environment
 
 ## Phase 9 — Security Validation
 - [ ] Attack simulation lab (12+ harmless scenarios)

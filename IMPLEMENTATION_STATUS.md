@@ -144,7 +144,29 @@ Known limitations:
 - Security posture checks are Linux-focused; Windows posture checks not yet implemented
 - Threat hunting post-filters (process name, file path, remote addr, username) run in Rust after SQL query
 
-## Phases 8–10
+## Phase 8 — Desktop Application
+
+| Component | Status | Notes |
+|---|---|---|
+| Tauri v2 project | ✅ | Rust backend, separate Cargo crate, excluded from workspace |
+| React 18 + TypeScript | ✅ | Vite bundler, strict TS, path aliases |
+| IPC bridge | ✅ | 13 Tauri commands bridging to agent Unix domain socket |
+| Navigation (22 sections) | ✅ | Dashboard, Alerts, Processes, Files, Network, Auth, Rules, Enforcement, Audit, AI, Ransomware, Persistence, File Intel, Hunt, Forensics, Posture, Tamper, Health, Command, Settings, About |
+| Dark graphite theme | ✅ | 40+ CSS custom properties, scrollbar, selection, transitions |
+| Real-time polling | ✅ | Auto-refresh 3–10s per view, Promise.all for dashboard |
+| Sidebar navigation | ✅ | 6 grouped sections, collapsible, active state highlight |
+| Top bar status | ✅ | Live agent status, event/alert counts, policy mode, version |
+| Command Center | ✅ | Interactive terminal with 12 commands, JSON output |
+| Placeholder icons | ✅ | Generated PNGs, ICO, ICNS for app branding |
+
+Known limitations:
+- Requires Node.js + npm for frontend build (`npm install && npm run build`)
+- Requires Tauri CLI for dev mode (`cargo install tauri-cli && cargo tauri dev`)
+- Linux/Windows installer packaging not yet built (needs `cargo tauri build`)
+- Frontend TypeScript not yet type-checked (no `npx tsc --noEmit` without Node.js)
+- Icons are placeholder blue squares — replace with proper OS Defender branding
+
+## Phases 9–10
 
 All components: ⬜ Not started
 
