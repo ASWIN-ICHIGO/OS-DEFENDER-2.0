@@ -2,7 +2,7 @@ use crate::events::{
     EventType, EvidenceRef, NetDirection, NetworkContext, NetworkProtocol, NormalizedEvent,
     OsType, Severity,
 };
-use crate::platform::{CollectorError, CollectorResult, NetworkCollector};
+use crate::platform::{CollectorResult, NetworkCollector};
 use std::collections::HashSet;
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -121,14 +121,14 @@ impl LinuxNetworkCollector {
                 continue;
             };
             for fd in fds.flatten() {
-                if let Ok(link) = fs::read_link(fd.path()) {
-                    if link.to_string_lossy() == target {
-                        let name = fs::read_to_string(format!("/proc/{pid}/comm"))
-                            .unwrap_or_default()
-                            .trim()
-                            .to_string();
-                        return Some((pid, name));
-                    }
+                if let Ok(link) = fs::read_link(fd.path())
+                    && link.to_string_lossy() == target
+                {
+                    let name = fs::read_to_string(format!("/proc/{pid}/comm"))
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    return Some((pid, name));
                 }
             }
         }
@@ -154,9 +154,7 @@ impl NetworkCollector for LinuxNetworkCollector {
 
                 let is_loopback =
                     conn.remote_addr == "127.0.0.1" || conn.remote_addr == "::1";
-                let direction = if conn.remote_port == 0 {
-                    NetDirection::Local
-                } else if is_loopback {
+                let direction = if conn.remote_port == 0 || is_loopback {
                     NetDirection::Local
                 } else {
                     NetDirection::Outbound

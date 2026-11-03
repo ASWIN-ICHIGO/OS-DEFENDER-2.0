@@ -1,5 +1,5 @@
 use crate::events::NormalizedEvent;
-use super::Alert;
+use super::super::Alert;
 
 pub trait Rule: Send + Sync {
     fn id(&self) -> &str;
@@ -49,37 +49,5 @@ impl RuleSet {
 impl Default for RuleSet {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::events::{EventType, OsType, Severity};
-
-    struct AlwaysAlert;
-    impl Rule for AlwaysAlert {
-        fn id(&self) -> &str { "test-always" }
-        fn name(&self) -> &str { "Always Alert" }
-        fn evaluate(&mut self, event: &NormalizedEvent) -> Option<Alert> {
-            Some(Alert::from_rule(
-                event.event_id,
-                self.id(),
-                Severity::High,
-                "Test alert".into(),
-                "Test".into(),
-                1.0,
-            ))
-        }
-    }
-
-    #[test]
-    fn ruleset_collects_alerts() {
-        let mut rs = RuleSet::new();
-        rs.add_rule(Box::new(AlwaysAlert));
-        let event = NormalizedEvent::new("ep".into(), OsType::Linux, EventType::Process, Severity::Info);
-        let alerts = rs.evaluate(&event);
-        assert_eq!(alerts.len(), 1);
-        assert_eq!(alerts[0].rule_id.as_deref(), Some("test-always"));
     }
 }

@@ -1,3 +1,3 @@
 mod blindspot;
 
-pub use blindspot::BlindSpotDetector;
+pub use blindspot::{BlindSpotDetector, SensorStatus, VisibilityAssessment};

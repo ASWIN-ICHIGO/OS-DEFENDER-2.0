@@ -23,13 +23,14 @@
 - [x] systemd service definition
 - [x] Documentation suite
 
-## Phase 2 — Linux Protection (Next)
-- [ ] Implement 5+ detection rules (brute-force, suspicious process, file tampering, etc.)
-- [ ] IsolationForest anomaly detection (Rust or Python bridge)
-- [ ] File monitoring for sensitive paths (/etc, ~/.ssh, crontabs)
-- [ ] Persistence mechanism monitoring (systemd, cron, shell rc files)
-- [ ] Process tree tracking and parent-child analysis
-- [ ] Integrate all collectors into agent main loop
+## Phase 2 — Linux Protection ✅
+- [x] 5 detection rules: brute-force (R001), suspicious process (R002), file tampering (R003), anomalous network (R004), persistence change (R005)
+- [x] MITRE ATT&CK mapping: T1110, T1059, T1059.004, T1565.001, T1486, T1071, T1571, T1053.003, T1543.002, T1546.004, T1574.006, T1098.004, T1547.001
+- [x] File monitoring for sensitive paths (/etc/shadow, sudoers, authorized_keys, ld.so.preload, ssh configs)
+- [x] Persistence mechanism monitoring (systemd, cron, shell rc files, init.d, XDG autostart — 14 patterns)
+- [x] Process tree tracking and parent-child analysis with cycle protection
+- [x] Integrate all collectors + detection engine into agent main loop
+- [ ] IsolationForest anomaly detection — deferred to Phase 6
 - [ ] End-to-end integration tests with real OS events
 - [ ] Performance benchmarks (CPU, RAM, latency)
 

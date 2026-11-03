@@ -35,11 +35,16 @@ Last updated: 2026-11-03
 
 | Component | Status | Notes |
 |---|---|---|
-| Detection rules | ⬜ | Brute-force, suspicious process, file tampering |
-| Anomaly detection | ⬜ | IsolationForest integration |
-| Sensitive file monitoring | ⬜ | /etc, ~/.ssh, crontabs |
-| Persistence monitoring | ⬜ | systemd, cron, shell configs |
-| Process tree tracking | ⬜ | Parent-child analysis |
+| Brute-force rule (R001) | ✅ | T1110, threshold+cooldown+escalation, 4 tests |
+| Suspicious process rule (R002) | ✅ | T1059/T1059.004, reverse shells, SUID, parent-child, 5 tests |
+| File tampering rule (R003) | ✅ | T1565.001/T1486, sensitive files + rapid-modification ransomware indicator, 4 tests |
+| Anomalous network rule (R004) | ✅ | T1071/T1571, uncommon ports, backdoor ports, new listeners, 4 tests |
+| Persistence change rule (R005) | ✅ | T1053.003/T1543.002/T1546.004 +3 more, 14 patterns, 7 tests |
+| Process tree tracking | ✅ | /proc snapshot, ancestry/children queries, cycle protection, 4 tests |
+| Sensitive file monitoring | ✅ | Via R003 — /etc/shadow, sudoers, authorized_keys, ld.so.preload |
+| Persistence monitoring | ✅ | Via R005 — systemd, cron, shell configs, init.d, XDG autostart |
+| Agent integration | ✅ | All 4 collectors + detection engine + process tree in main loop |
+| Anomaly detection | ⬜ | IsolationForest — deferred to Phase 6 (AI Intelligence) |
 | Integration tests | ⬜ | End-to-end with real OS events |
 | Performance benchmarks | ⬜ | CPU, RAM, latency measurement |
 

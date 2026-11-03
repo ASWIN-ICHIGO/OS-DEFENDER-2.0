@@ -108,10 +108,10 @@ impl LinuxProcessCollector {
         for snap in snapshots {
             current_pids.insert(snap.pid, snap.start_ticks);
 
-            if let Some(&known_ticks) = self.known_processes.get(&snap.pid) {
-                if known_ticks == snap.start_ticks {
-                    continue; // same process, already known
-                }
+            if let Some(&known_ticks) = self.known_processes.get(&snap.pid)
+                && known_ticks == snap.start_ticks
+            {
+                continue; // same process, already known
             }
 
             let event = NormalizedEvent::new(

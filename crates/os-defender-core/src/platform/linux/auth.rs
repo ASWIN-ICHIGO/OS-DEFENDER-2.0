@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 pub struct LinuxAuthCollector {
     endpoint_id: String,
     child: Option<std::process::Child>,
-    reader: Option<BufReader<std::process::ChildStdout>>,
+    reader: Option<BufReader<std::fs::File>>,
 }
 
 impl LinuxAuthCollector {
@@ -26,7 +26,7 @@ impl LinuxAuthCollector {
             return Ok(());
         }
 
-        let child = Command::new("/usr/bin/journalctl")
+        let mut child = Command::new("/usr/bin/journalctl")
             .args([
                 "--follow",
                 "--output=json",
@@ -38,39 +38,35 @@ impl LinuxAuthCollector {
             .spawn()
             .map_err(|e| CollectorError::Unavailable(format!("journalctl: {e}")))?;
 
-        let stdout = child.stdout.as_ref().ok_or_else(|| {
+        let stdout = child.stdout.take().ok_or_else(|| {
             CollectorError::Internal(anyhow::anyhow!("no stdout from journalctl"))
         })?;
 
-        // safety: we take ownership of stdout before storing child
-        // this is a workaround — in production we'd use tokio::process
-        let stdout_fd = unsafe {
+        // dup the fd so we own it independently of the Child
+        let file = unsafe {
             use std::os::unix::io::{AsRawFd, FromRawFd};
             let fd = stdout.as_raw_fd();
             let dup_fd = libc::dup(fd);
+            if dup_fd < 0 {
+                return Err(CollectorError::Internal(anyhow::anyhow!("dup() failed")));
+            }
             std::fs::File::from_raw_fd(dup_fd)
         };
 
-        self.reader = Some(BufReader::new(unsafe {
-            use std::os::unix::io::FromRawFd;
-            std::process::ChildStdout::from_raw_fd(
-                std::os::unix::io::IntoRawFd::into_raw_fd(stdout_fd),
-            )
-        }));
+        self.reader = Some(BufReader::new(file));
         self.child = Some(child);
         Ok(())
     }
 
-    fn parse_journal_entry(&self, json_str: &str) -> Option<NormalizedEvent> {
+    fn parse_journal_entry(endpoint_id: &str, json_str: &str) -> Option<NormalizedEvent> {
         let entry: serde_json::Value = serde_json::from_str(json_str).ok()?;
         let message = entry.get("MESSAGE")?.as_str()?;
         let exe = entry.get("_EXE").and_then(|v| v.as_str());
 
-        // only trust entries from the real sshd binary
-        if let Some(exe_path) = exe {
-            if !exe_path.starts_with("/usr/") {
-                return None;
-            }
+        if let Some(exe_path) = exe
+            && !exe_path.starts_with("/usr/")
+        {
+            return None;
         }
 
         let (action, severity, username, source_addr) = if message.contains("Accepted") {
@@ -99,7 +95,7 @@ impl LinuxAuthCollector {
         };
 
         let event = NormalizedEvent::new(
-            self.endpoint_id.clone(),
+            endpoint_id.to_string(),
             OsType::Linux,
             EventType::Authentication,
             severity,
@@ -134,17 +130,19 @@ impl AuthCollector for LinuxAuthCollector {
     fn poll_auth_events(&mut self) -> Pin<Box<dyn std::future::Future<Output = CollectorResult> + Send + '_>> {
         Box::pin(async {
             self.ensure_started()?;
+            let endpoint_id = self.endpoint_id.clone();
             let reader = self.reader.as_mut().unwrap();
             let mut events = Vec::new();
             let mut line = String::new();
 
-            // non-blocking: read available lines
             loop {
                 line.clear();
                 match reader.read_line(&mut line) {
                     Ok(0) => break,
                     Ok(_) => {
-                        if let Some(event) = self.parse_journal_entry(line.trim()) {
+                        if let Some(event) =
+                            Self::parse_journal_entry(&endpoint_id, line.trim())
+                        {
                             events.push(event);
                         }
                     }
@@ -152,7 +150,7 @@ impl AuthCollector for LinuxAuthCollector {
                     Err(e) => return Err(CollectorError::Internal(e.into())),
                 }
                 if events.len() >= 100 {
-                    break; // bounded batch
+                    break;
                 }
             }
 
@@ -171,9 +169,8 @@ mod tests {
 
     #[test]
     fn parse_accepted_login() {
-        let collector = LinuxAuthCollector::new("test-ep".into());
         let json = r#"{"MESSAGE":"Accepted password for aswin from 192.168.1.100 port 22 ssh2","_EXE":"/usr/sbin/sshd"}"#;
-        let event = collector.parse_journal_entry(json).unwrap();
+        let event = LinuxAuthCollector::parse_journal_entry("test-ep", json).unwrap();
         let auth = event.auth_context.unwrap();
         assert_eq!(auth.action, AuthAction::Login);
         assert_eq!(auth.username, "aswin");
@@ -182,9 +179,8 @@ mod tests {
 
     #[test]
     fn parse_failed_login() {
-        let collector = LinuxAuthCollector::new("test-ep".into());
         let json = r#"{"MESSAGE":"Failed password for root from 10.0.0.5 port 43210 ssh2","_EXE":"/usr/sbin/sshd"}"#;
-        let event = collector.parse_journal_entry(json).unwrap();
+        let event = LinuxAuthCollector::parse_journal_entry("test-ep", json).unwrap();
         assert_eq!(event.severity, Severity::Medium);
         let auth = event.auth_context.unwrap();
         assert_eq!(auth.action, AuthAction::Failed);
@@ -193,8 +189,7 @@ mod tests {
 
     #[test]
     fn rejects_untrusted_exe() {
-        let collector = LinuxAuthCollector::new("test-ep".into());
         let json = r#"{"MESSAGE":"Accepted password for victim from 1.2.3.4 port 22 ssh2","_EXE":"/tmp/fake-sshd"}"#;
-        assert!(collector.parse_journal_entry(json).is_none());
+        assert!(LinuxAuthCollector::parse_journal_entry("test-ep", json).is_none());
     }
 }
