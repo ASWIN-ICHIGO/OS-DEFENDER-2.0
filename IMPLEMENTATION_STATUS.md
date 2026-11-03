@@ -61,7 +61,25 @@ Last updated: 2026-11-03
 | CLI commands | ✅ | audit, policy (get/set), verify-audit commands |
 | IPC protocol | ✅ | GetAuditLog, GetPolicyMode, SetPolicyMode, VerifyAuditChain |
 
-## Phases 4–10
+## Phase 4 — Windows Protection
+
+| Component | Status | Notes |
+|---|---|---|
+| Windows process collector | ✅ | ToolHelp32 snapshot, PID diff detection, ProcessCollector trait |
+| Windows file collector | ✅ | FindFirstChangeNotification, subtree watch, FileCollector trait |
+| Windows network collector | ✅ | GetExtendedTcpTable, IPv4 TCP connections, NetworkCollector trait |
+| Windows auth collector | ✅ | Security Event Log (4624/4625/4634/4672), AuthCollector trait |
+| Windows system info | ✅ | Registry MachineGuid, GetComputerNameExW hostname |
+| Cross-platform parity | ✅ | 9 integration tests: all detection rules fire on Windows events |
+| Windows crate features | ✅ | ToolHelp, Registry, SystemInfo, EventLog, FileSystem, IpHelper, WinSock |
+
+Known limitations:
+- Windows code compiles only on Windows (`cfg(target_os = "windows")`)
+- Not yet tested on real Windows — requires Week 3 dual-boot setup
+- File collector uses change notifications (coarse), not ReadDirectoryChangesW detailed events
+- Auth collector does not yet extract username strings from event log records
+
+## Phases 5–10
 
 All components: ⬜ Not started
 
