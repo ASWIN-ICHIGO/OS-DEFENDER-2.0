@@ -120,7 +120,31 @@ Known limitations:
 - Ollama LLM tested only in fallback mode (no live Ollama in CI)
 - Feature extraction assumes JSON NormalizedEvent schema compatibility
 
-## Phases 7–10
+## Phase 7 — Advanced Security Modules
+
+| Component | Status | Notes |
+|---|---|---|
+| Ransomware defense (R006) | ✅ | Canary files, entropy detection, rapid-mod/rename aggregation, known extension matching, MITRE T1486 |
+| Canary file manager | ✅ | Deploy to directories, SHA-256 verification, tamper/deletion detection, 3 canary names |
+| Persistence scanner (Linux) | ✅ | systemd services/timers, cron, shell rc, init.d, XDG autostart, udev rules |
+| Persistence scanner (Windows) | ✅ | Registry Run keys, startup folder, scheduled tasks (cfg-gated) |
+| File intelligence | ✅ | SHA-256 hashing, known-good/bad reputation DB, IOC list loading, save/load JSON lists |
+| Threat hunting engine | ✅ | SQL-backed query: filter by type, severity, time, process, file, network, auth, payload text search |
+| Digital forensics | ✅ | Timeline builder (events+alerts+actions), evidence collector (logs, snapshots, raw), forensic report (text+JSON) |
+| Security posture assessment | ✅ | 10 hardening checks: shadow perms, SSH root/password, firewall, SUID audit, /tmp noexec, core dumps, ASLR, auto-updates, empty passwords |
+| Tamper protection | ✅ | Integrity manifest (file/directory recording), SHA-256 verification, signed config with hash validation |
+| IPC protocol | ✅ | ThreatHunt, GetPosture, GetPersistence, VerifyIntegrity request/response types |
+| CLI commands | ✅ | hunt (with filters), posture, persistence, integrity commands |
+| Agent wiring | ✅ | All new IPC handlers in agent main loop |
+
+Known limitations:
+- PDF forensic report generation not yet implemented (would require additional dependency)
+- Windows persistence scanner untested on real Windows — requires dual-boot setup
+- File intelligence reputation DB is in-memory only (not persisted to SQLite yet)
+- Security posture checks are Linux-focused; Windows posture checks not yet implemented
+- Threat hunting post-filters (process name, file path, remote addr, username) run in Rust after SQL query
+
+## Phases 8–10
 
 All components: ⬜ Not started
 

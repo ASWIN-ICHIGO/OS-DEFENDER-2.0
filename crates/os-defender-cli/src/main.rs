@@ -37,6 +37,39 @@ enum Commands {
     VerifyAudit,
     /// Show AI engine status
     AiStatus,
+    /// Threat hunting query
+    Hunt {
+        /// Event type filter (process, file, network, authentication)
+        #[arg(long)]
+        event_type: Option<String>,
+        /// Minimum severity (info, low, medium, high, critical)
+        #[arg(long)]
+        severity: Option<String>,
+        /// Process name filter
+        #[arg(long)]
+        process: Option<String>,
+        /// File path pattern filter
+        #[arg(long)]
+        file_path: Option<String>,
+        /// Remote address filter
+        #[arg(long)]
+        remote_addr: Option<String>,
+        /// Username filter
+        #[arg(long)]
+        username: Option<String>,
+        /// Text search in event payload
+        #[arg(long)]
+        contains: Option<String>,
+        /// Max results
+        #[arg(short, long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Security posture assessment
+    Posture,
+    /// Scan persistence mechanisms
+    Persistence,
+    /// Verify agent integrity
+    Integrity,
     /// Request agent shutdown
     Shutdown,
 }
@@ -61,6 +94,24 @@ async fn main() -> Result<()> {
         }
         Commands::VerifyAudit => ipc::IpcRequest::VerifyAuditChain,
         Commands::AiStatus => ipc::IpcRequest::GetAiStatus,
+        Commands::Hunt {
+            event_type, severity, process, file_path,
+            remote_addr, username, contains, limit,
+        } => {
+            let mut q = os_defender_core::advanced::hunting::HuntQuery::new()
+                .with_limit(*limit);
+            if let Some(et) = event_type { q = q.with_event_type(et); }
+            if let Some(s) = severity { q = q.with_severity_min(s); }
+            if let Some(p) = process { q = q.with_process_name(p); }
+            if let Some(f) = file_path { q = q.with_file_path(f); }
+            if let Some(r) = remote_addr { q = q.with_remote_addr(r); }
+            if let Some(u) = username { q = q.with_username(u); }
+            if let Some(c) = contains { q = q.with_payload_contains(c); }
+            ipc::IpcRequest::ThreatHunt { query: Box::new(q) }
+        }
+        Commands::Posture => ipc::IpcRequest::GetPosture,
+        Commands::Persistence => ipc::IpcRequest::GetPersistence,
+        Commands::Integrity => ipc::IpcRequest::VerifyIntegrity,
         Commands::Shutdown => ipc::IpcRequest::Shutdown,
     };
 
@@ -179,6 +230,50 @@ fn print_response(response: &ipc::IpcResponse) {
             println!("  Anomalies:        {}", ai.anomalies_detected);
             println!("  Drift detected:   {}", ai.drift_detected);
             println!("  Ollama LLM:       {}", if ai.ollama_available { "available" } else { "not available" });
+        }
+        ipc::IpcResponse::HuntResults(result) => {
+            println!("Hunt: {} matches", result.total_matches);
+            for event in &result.events {
+                println!(
+                    "  [{}] {} {:?} — {} ({})",
+                    event.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                    event.severity,
+                    event.event_type,
+                    event.process_context.as_ref().map(|p| p.name.as_str())
+                        .or(event.file_context.as_ref().map(|f| f.path.as_str()))
+                        .or(event.network_context.as_ref().map(|n| n.local_addr.as_str()))
+                        .or(event.auth_context.as_ref().map(|a| a.username.as_str()))
+                        .unwrap_or("-"),
+                    event.endpoint_id,
+                );
+            }
+        }
+        ipc::IpcResponse::PostureReport(report) => {
+            print!("{}", report.to_text());
+        }
+        ipc::IpcResponse::PersistenceEntries(entries) => {
+            println!("Persistence mechanisms: {} found", entries.len());
+            for entry in entries {
+                let icon = match entry.risk {
+                    os_defender_core::advanced::persistence::PersistenceRisk::Known => ".",
+                    os_defender_core::advanced::persistence::PersistenceRisk::Suspicious => "?",
+                    os_defender_core::advanced::persistence::PersistenceRisk::HighRisk => "!",
+                };
+                println!("  [{icon}] {} — {} ({})", entry.kind, entry.name, entry.mitre_technique);
+            }
+        }
+        ipc::IpcResponse::IntegrityStatus(result) => {
+            if result.is_clean() {
+                println!("Integrity: CLEAN ({} files verified)", result.intact);
+            } else {
+                println!("Integrity: VIOLATED");
+                for v in &result.tampered {
+                    println!("  TAMPERED: {} (expected: {}..)", v.path, &v.expected_sha256[..16]);
+                }
+                for m in &result.missing {
+                    println!("  MISSING: {m}");
+                }
+            }
         }
         ipc::IpcResponse::Ok => println!("OK"),
         ipc::IpcResponse::Error { message } => {

@@ -589,6 +589,27 @@ async fn handle_ipc_client(
             ipc::IpcRequest::GetAiStatus => {
                 ipc::IpcResponse::AiStatus(ipc::AiEngineStatus::default())
             }
+            ipc::IpcRequest::ThreatHunt { ref query } => {
+                let s = state.lock().await;
+                match os_defender_core::advanced::hunting::HuntingEngine::execute(&s.store, query) {
+                    Ok(result) => ipc::IpcResponse::HuntResults(Box::new(result)),
+                    Err(e) => ipc::IpcResponse::Error { message: e.to_string() },
+                }
+            }
+            ipc::IpcRequest::GetPosture => {
+                let report = os_defender_core::advanced::posture::PostureAssessor::new("local").assess();
+                ipc::IpcResponse::PostureReport(Box::new(report))
+            }
+            ipc::IpcRequest::GetPersistence => {
+                let scanner = os_defender_core::advanced::persistence::LinuxPersistenceScanner::new();
+                let entries = scanner.scan();
+                ipc::IpcResponse::PersistenceEntries(entries)
+            }
+            ipc::IpcRequest::VerifyIntegrity => {
+                let tp = os_defender_core::advanced::tamper::TamperProtection::new(env!("CARGO_PKG_VERSION"));
+                let result = tp.verify();
+                ipc::IpcResponse::IntegrityStatus(Box::new(result))
+            }
             ipc::IpcRequest::Shutdown => {
                 info!("shutdown requested via IPC");
                 ipc::IpcResponse::Ok

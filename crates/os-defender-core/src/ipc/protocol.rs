@@ -15,6 +15,10 @@ pub enum IpcRequest {
     SetPolicyMode { mode: crate::response::PolicyMode },
     VerifyAuditChain,
     GetAiStatus,
+    ThreatHunt { query: Box<crate::advanced::hunting::HuntQuery> },
+    GetPosture,
+    GetPersistence,
+    VerifyIntegrity,
     Shutdown,
 }
 
@@ -28,6 +32,10 @@ pub enum IpcResponse {
     PolicyMode(crate::response::PolicyMode),
     AuditChainStatus { valid: bool, entries: usize },
     AiStatus(AiEngineStatus),
+    HuntResults(Box<crate::advanced::hunting::HuntResult>),
+    PostureReport(Box<crate::advanced::posture::PostureReport>),
+    PersistenceEntries(Vec<crate::advanced::persistence::PersistenceEntry>),
+    IntegrityStatus(Box<crate::advanced::tamper::TamperCheckResult>),
     Ok,
     Error { message: String },
 }

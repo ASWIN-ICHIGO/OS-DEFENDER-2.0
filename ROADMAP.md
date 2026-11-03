@@ -80,14 +80,19 @@
 - [ ] Wire AI sidecar process to agent main loop
 - [ ] Real-time event scoring during collection
 
-## Phase 7 — Advanced Security Modules
-- [ ] Ransomware defense (rapid-modification detection, canary files)
-- [ ] Persistence defense (systemd, cron, autoruns, scheduled tasks)
-- [ ] File intelligence (SHA-256, reputation, quarantine)
-- [ ] Threat hunting query engine
-- [ ] Digital forensics (timeline, evidence, PDF reports)
-- [ ] Vulnerability/security posture assessment
-- [ ] Tamper protection (agent integrity, signed config)
+## Phase 7 — Advanced Security Modules ✅
+- [x] Ransomware defense (canary files, entropy detection, rapid-mod/rename aggregation, known extension matching)
+- [x] Persistence defense (Linux: systemd, cron, shell rc, init.d, XDG, udev; Windows: Run keys, startup folder, scheduled tasks)
+- [x] File intelligence (SHA-256, local reputation DB, known-good/known-bad lists, IOC loading, file analysis)
+- [x] Threat hunting query engine (SQL-backed, filter by type/severity/time/process/file/network/auth/payload)
+- [x] Digital forensics (timeline builder, evidence collector, forensic report generation with JSON export)
+- [x] Security posture assessment (10 checks: shadow perms, SSH config, firewall, SUID, noexec, ASLR, updates, empty passwords)
+- [x] Tamper protection (integrity manifest, SHA-256 verification, signed config with hash validation)
+- [x] IPC integration: ThreatHunt, GetPosture, GetPersistence, VerifyIntegrity commands
+- [x] CLI commands: hunt, posture, persistence, integrity
+- [x] New detection rule: R006-ransomware-defense (MITRE T1486)
+- [ ] PDF report generation (requires additional dependency)
+- [ ] Windows persistence scanner testing on real Windows
 
 ## Phase 8 — Desktop Application
 - [ ] Tauri project setup
