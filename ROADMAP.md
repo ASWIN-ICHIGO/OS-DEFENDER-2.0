@@ -67,14 +67,18 @@
 - [ ] Full DACL-based quarantine directory ACLs
 - [ ] Real Windows testing on dual-boot setup
 
-## Phase 6 — AI Intelligence
-- [ ] Behavioural feature extraction
-- [ ] IsolationForest training pipeline
-- [ ] ONNX model export and local inference
-- [ ] Baseline learning with drift detection
-- [ ] Anomaly explanations with contributing factors
-- [ ] Optional local LLM via Ollama
-- [ ] Fully offline operation verification
+## Phase 6 — AI Intelligence ✅
+- [x] Behavioural feature extraction (17 features: process/network/file/auth/temporal)
+- [x] IsolationForest training pipeline (scikit-learn, configurable parameters)
+- [x] ONNX model export via skl2onnx + ONNX Runtime local inference
+- [x] Baseline learning with z-score drift detection (save/load profiles)
+- [x] Anomaly explanations with per-feature contributing factors
+- [x] Optional local LLM via Ollama (graceful fallback when unavailable)
+- [x] Fully offline operation verified (end-to-end test, no network)
+- [x] IPC integration: GetAiStatus command, CLI ai-status subcommand
+- [x] 41 Python tests passing, ruff clean
+- [ ] Wire AI sidecar process to agent main loop
+- [ ] Real-time event scoring during collection
 
 ## Phase 7 — Advanced Security Modules
 - [ ] Ransomware defense (rapid-modification detection, canary files)

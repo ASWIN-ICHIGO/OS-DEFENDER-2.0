@@ -586,6 +586,9 @@ async fn handle_ipc_client(
                     },
                 }
             }
+            ipc::IpcRequest::GetAiStatus => {
+                ipc::IpcResponse::AiStatus(ipc::AiEngineStatus::default())
+            }
             ipc::IpcRequest::Shutdown => {
                 info!("shutdown requested via IPC");
                 ipc::IpcResponse::Ok

@@ -97,7 +97,30 @@ Known limitations:
 - Windows ACL uses basic readonly permissions, not full DACL security descriptors
 - All Windows enforcement code untested on real Windows — requires dual-boot setup
 
-## Phases 6–10
+## Phase 6 — AI Intelligence
+
+| Component | Status | Notes |
+|---|---|---|
+| Behavioural feature extraction | ✅ | 17 features: process/network/file/auth/temporal per time window |
+| IsolationForest training | ✅ | scikit-learn, configurable contamination/estimators, metadata output |
+| ONNX model export | ✅ | skl2onnx → ONNX, scaler JSON, model metadata |
+| ONNX inference engine | ✅ | onnxruntime CPU, single/batch scoring, score+label extraction |
+| Baseline learning | ✅ | Per-feature mean/std, save/load JSON profiles |
+| Drift detection | ✅ | Z-score based, configurable threshold, per-feature drift reports |
+| Anomaly explainer | ✅ | Per-feature z-score decomposition, top-k contributors, natural language summary |
+| Ollama LLM integration | ✅ | Optional local LLM via REST, graceful rule-based fallback |
+| IPC: AI status | ✅ | GetAiStatus request/response, CLI ai-status command |
+| Offline verification | ✅ | End-to-end test: events→features→train→ONNX→inference→explain, no network |
+| Python test suite | ✅ | 41 tests: features (10), baseline (8), training (10), inference (8), ollama (3), offline (2) |
+
+Known limitations:
+- ONNX export requires skl2onnx (dev dependency, not needed at inference time)
+- Training on 12 windows is slow (~80s) due to IsolationForest ONNX conversion overhead
+- AI sidecar process not yet wired to agent (returns default status via IPC)
+- Ollama LLM tested only in fallback mode (no live Ollama in CI)
+- Feature extraction assumes JSON NormalizedEvent schema compatibility
+
+## Phases 7–10
 
 All components: ⬜ Not started
 

@@ -1,2 +1,4 @@
 # OS-DEFENDER AI inference layer
-# Phase 6: ONNX Runtime local inference, optional LLM integration
+from inference.explainer import AnomalyExplainer, AnomalyExplanation
+
+__all__ = ["AnomalyExplainer", "AnomalyExplanation"]

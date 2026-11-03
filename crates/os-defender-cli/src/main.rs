@@ -35,6 +35,8 @@ enum Commands {
     },
     /// Verify audit log hash chain integrity
     VerifyAudit,
+    /// Show AI engine status
+    AiStatus,
     /// Request agent shutdown
     Shutdown,
 }
@@ -58,6 +60,7 @@ async fn main() -> Result<()> {
             ipc::IpcRequest::SetPolicyMode { mode: m }
         }
         Commands::VerifyAudit => ipc::IpcRequest::VerifyAuditChain,
+        Commands::AiStatus => ipc::IpcRequest::GetAiStatus,
         Commands::Shutdown => ipc::IpcRequest::Shutdown,
     };
 
@@ -163,6 +166,19 @@ fn print_response(response: &ipc::IpcResponse) {
             } else {
                 println!("Audit chain: TAMPERED (break detected at entry ~{entries})");
             }
+        }
+        ipc::IpcResponse::AiStatus(ai) => {
+            let status_str = if ai.available { "AVAILABLE" } else { "NOT CONFIGURED" };
+            println!("AI Engine: {status_str}");
+            println!("  Model loaded:     {}", ai.model_loaded);
+            if let Some(ref path) = ai.model_path {
+                println!("  Model path:       {path}");
+            }
+            println!("  Baseline learned: {}", ai.baseline_learned);
+            println!("  Events scored:    {}", ai.events_scored);
+            println!("  Anomalies:        {}", ai.anomalies_detected);
+            println!("  Drift detected:   {}", ai.drift_detected);
+            println!("  Ollama LLM:       {}", if ai.ollama_available { "available" } else { "not available" });
         }
         ipc::IpcResponse::Ok => println!("OK"),
         ipc::IpcResponse::Error { message } => {

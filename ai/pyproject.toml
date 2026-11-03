@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "os-defender-ai"
@@ -12,12 +12,14 @@ dependencies = [
     "scikit-learn>=1.5",
     "onnxruntime>=1.19",
     "pydantic>=2.9",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
     "ruff>=0.8",
+    "skl2onnx>=1.17",
 ]
 llm = [
     "llama-cpp-python>=0.3",
@@ -29,3 +31,6 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["features*", "training*", "inference*", "llm*"]

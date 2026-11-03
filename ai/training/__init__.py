@@ -1,2 +1,5 @@
 # OS-DEFENDER model training
-# Phase 6: IsolationForest training, baseline learning, ONNX export
+from training.baseline import BaselineProfile
+from training.isolation_forest import AnomalyTrainer
+
+__all__ = ["AnomalyTrainer", "BaselineProfile"]

@@ -14,6 +14,7 @@ pub enum IpcRequest {
     GetPolicyMode,
     SetPolicyMode { mode: crate::response::PolicyMode },
     VerifyAuditChain,
+    GetAiStatus,
     Shutdown,
 }
 
@@ -26,6 +27,7 @@ pub enum IpcResponse {
     AuditLog(Vec<crate::response::AuditEntry>),
     PolicyMode(crate::response::PolicyMode),
     AuditChainStatus { valid: bool, entries: usize },
+    AiStatus(AiEngineStatus),
     Ok,
     Error { message: String },
 }
@@ -40,6 +42,19 @@ pub struct AgentStatus {
     pub policy_mode: String,
     pub collectors_active: Vec<String>,
     pub version: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AiEngineStatus {
+    pub available: bool,
+    pub model_loaded: bool,
+    pub model_path: Option<String>,
+    pub baseline_learned: bool,
+    pub events_scored: u64,
+    pub anomalies_detected: u64,
+    pub last_drift_check: Option<String>,
+    pub drift_detected: bool,
+    pub ollama_available: bool,
 }
 
 pub fn user_socket_path() -> std::path::PathBuf {
