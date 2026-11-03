@@ -184,8 +184,15 @@ Known limitations:
 - VM prevention verification deferred — requires root access + isolated VMs
 - False positive tuning requires real-world workload data collection
 
-## Phase 10
+## Phase 10 — Final Product
 
-All components: ⬜ Not started
-
-See ROADMAP.md for full breakdown.
+| Component | Status | Notes |
+|---|---|---|
+| Installation guide | ✅ | docs/INSTALLATION.md — prerequisites, build, setup, quick start, uninstall |
+| Configuration reference | ✅ | docs/CONFIGURATION.md — agent, policy, rules, collectors, AI, storage, desktop |
+| Architecture document | ✅ | docs/ARCHITECTURE.md — system overview, crate structure, data flow, IPC, platform abstraction |
+| Test report | ✅ | docs/TEST_REPORT.md — 214 tests (132 unit + 18 attack sim + 5 perf + 18 Windows + 41 Python) |
+| Threat model | ✅ | tests/security/THREAT_MODEL.md (completed in Phase 9) |
+| Demo scenarios | ✅ | docs/DEMO_SCENARIOS.md — 12 guided scenarios with expected outputs |
+| Demo script | ✅ | scripts/demo.sh — automated build + test + benchmark walkthrough |
+| Release packaging | ✅ | scripts/build-release.sh — collect binaries, config, docs into release-build/ |
