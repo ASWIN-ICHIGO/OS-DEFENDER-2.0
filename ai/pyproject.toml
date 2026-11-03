@@ -31,6 +31,7 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: marks tests that require ONNX export (deselect with '-m \"not slow\"')"]
 
 [tool.setuptools.packages.find]
 include = ["features*", "training*", "inference*", "llm*"]

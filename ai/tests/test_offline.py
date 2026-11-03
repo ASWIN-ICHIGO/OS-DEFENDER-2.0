@@ -4,8 +4,11 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+pytestmark = pytest.mark.slow
 
 from features.extractor import NUM_FEATURES, events_to_feature_vector
 from inference.engine import OnnxAnomalyDetector
@@ -48,7 +51,7 @@ def test_full_offline_pipeline(tmp_path):
     assert X.shape == (12, NUM_FEATURES)
 
     # 3. Train IsolationForest
-    trainer = AnomalyTrainer(n_estimators=50)
+    trainer = AnomalyTrainer(n_estimators=20)
     meta = trainer.train(X)
     assert meta["n_samples"] == 12
 
@@ -88,7 +91,7 @@ def test_model_load_and_reuse(tmp_path):
     rng = np.random.default_rng(42)
     X = rng.normal(5.0, 1.0, (50, NUM_FEATURES)).astype(np.float32)
 
-    trainer = AnomalyTrainer(n_estimators=30)
+    trainer = AnomalyTrainer(n_estimators=20)
     trainer.train(X)
     paths = trainer.save_all(tmp_path / "m")
 

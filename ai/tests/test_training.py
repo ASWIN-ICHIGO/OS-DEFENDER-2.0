@@ -76,8 +76,9 @@ def test_anomaly_detected():
     assert is_anomaly, "Extreme outlier should be detected as anomaly"
 
 
+@pytest.mark.slow
 def test_onnx_export(tmp_path):
-    trainer = AnomalyTrainer()
+    trainer = AnomalyTrainer(n_estimators=20)
     data = _generate_normal_data()
     trainer.train(data)
 
@@ -101,8 +102,9 @@ def test_save_scaler(tmp_path):
     assert len(scaler_data["mean"]) == NUM_FEATURES
 
 
+@pytest.mark.slow
 def test_save_all(tmp_path):
-    trainer = AnomalyTrainer()
+    trainer = AnomalyTrainer(n_estimators=20)
     data = _generate_normal_data()
     trainer.train(data)
 

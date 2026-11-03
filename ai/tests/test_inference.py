@@ -13,14 +13,16 @@ from inference.engine import OnnxAnomalyDetector
 from inference.explainer import AnomalyExplainer
 from training.isolation_forest import AnomalyTrainer
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture
 def trained_model(tmp_path):
-    """Train a model and save to tmp_path, return paths."""
+    """Train a small model and save to tmp_path, return paths."""
     rng = np.random.default_rng(42)
     data = rng.normal(loc=5.0, scale=1.0, size=(100, NUM_FEATURES)).astype(np.float32)
 
-    trainer = AnomalyTrainer()
+    trainer = AnomalyTrainer(n_estimators=20)
     trainer.train(data)
     paths = trainer.save_all(tmp_path / "model")
     return paths, data

@@ -74,7 +74,15 @@ systemctl --user enable --now os-defender-agent
 ### Run Tests
 
 ```bash
+# Rust — 173 tests (unit, attack simulation, performance, cross-platform)
 cargo test
+
+# Python AI — 41 tests (features, training, inference, baseline, offline)
+cd ai && python -m pytest tests/
+
+# Linting
+cargo clippy --workspace
+cd ai && ruff check .
 ```
 
 ## Project Structure
@@ -96,21 +104,51 @@ OS-DEFENDER-2.0/
 │   │       └── ipc/          # Agent ↔ CLI/GUI protocol
 │   ├── os-defender-agent/    # Background daemon binary
 │   └── os-defender-cli/      # Command-line interface
-├── ai/                       # Python AI/ML layer
-├── desktop/                  # Tauri + React desktop app
+├── ai/                       # Python AI/ML layer (IsolationForest, ONNX, Ollama)
+├── desktop/                  # Tauri v2 + React 18 desktop app
 ├── config/                   # systemd service, policies
 ├── tests/                    # Integration and security tests
-└── docs/                     # Additional documentation
+│   └── security/             # MITRE mapping, capability matrix, threat model
+├── docs/                     # Installation, configuration, architecture, test report
+└── scripts/                  # Build and demo scripts
+```
+
+## Detection & Prevention
+
+| Capability | MITRE ATT&CK | Rule |
+|---|---|---|
+| SSH brute-force detection | T1110 | R001 |
+| Suspicious process / reverse shell | T1059, T1059.004 | R002 |
+| Sensitive file tampering | T1565.001 | R003 |
+| Anomalous network / C2 beaconing | T1071, T1571 | R004 |
+| Persistence mechanism changes | T1053.003, T1543.002, T1546.004, T1574.006, T1098.004, T1547.001 | R005 |
+| Ransomware defense | T1486 | R006 |
+
+**Advanced modules:** Threat hunting (SQL-backed), security posture assessment (10 checks), digital forensics (timeline + evidence), file intelligence (IOC/reputation), persistence scanner, tamper protection (integrity manifest + signed config).
+
+**AI/ML:** IsolationForest anomaly detection, ONNX Runtime inference, baseline drift detection, anomaly explainer, optional local LLM via Ollama — all fully offline.
+
+## Desktop Application
+
+Tauri v2 + React 18 + TypeScript with 22 navigation sections providing full SOC visibility.
+
+```bash
+cd desktop && npm install && npm run tauri dev
 ```
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — System design and component details
+- [docs/INSTALLATION.md](docs/INSTALLATION.md) — Prerequisites, build, setup guide
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — Agent, policy, rules, AI parameters
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System design, data flow, IPC protocol
+- [docs/TEST_REPORT.md](docs/TEST_REPORT.md) — 214 tests across Rust and Python
+- [docs/DEMO_SCENARIOS.md](docs/DEMO_SCENARIOS.md) — 12 guided demo scenarios
 - [ROADMAP.md](ROADMAP.md) — Development phases and progress
+- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — Feature status matrix
 - [THREAT_MODEL.md](THREAT_MODEL.md) — Security analysis and limitations
 - [SECURITY.md](SECURITY.md) — Security design principles
-- [TESTING.md](TESTING.md) — Testing strategy
-- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — Current feature status
+- [tests/security/MITRE_MAPPING.md](tests/security/MITRE_MAPPING.md) — 13 MITRE techniques
+- [tests/security/CAPABILITY_MATRIX.md](tests/security/CAPABILITY_MATRIX.md) — Linux vs Windows parity
 
 ## Core Principles
 
