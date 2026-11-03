@@ -1,6 +1,10 @@
 pub mod nftables;
 pub mod cgroup;
 pub mod quarantine;
+#[cfg(target_os = "windows")]
+pub mod wfp;
+#[cfg(target_os = "windows")]
+pub mod job_object;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

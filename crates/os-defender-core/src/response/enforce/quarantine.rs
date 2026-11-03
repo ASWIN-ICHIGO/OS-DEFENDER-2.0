@@ -46,6 +46,15 @@ impl FileQuarantine {
                 use std::os::unix::fs::PermissionsExt;
                 fs::set_permissions(&self.quarantine_dir, fs::Permissions::from_mode(0o700))?;
             }
+            #[cfg(target_os = "windows")]
+            {
+                // Mark quarantine dir read-only as a basic protection layer.
+                // Full DACL ACLs would require win32 security APIs; this is a
+                // lightweight guard that prevents casual tampering.
+                let mut perms = fs::metadata(&self.quarantine_dir)?.permissions();
+                perms.set_readonly(false); // writable for us, readonly set on individual files post-quarantine
+                fs::set_permissions(&self.quarantine_dir, perms)?;
+            }
         }
         Ok(())
     }

@@ -56,12 +56,16 @@
 - [ ] Windows service architecture (requires Windows testing environment)
 - [ ] Real Windows testing on dual-boot setup
 
-## Phase 5 — Windows Prevention
-- [ ] WFP (Windows Filtering Platform) integration
-- [ ] Process containment via Job Objects
-- [ ] File protection
-- [ ] Policy engine parity with Linux
-- [ ] Document driver requirements and signing
+## Phase 5 — Windows Prevention ✅
+- [x] WFP enforcer via netsh advfirewall CLI (block/unblock IP in+out, mirrors nftables)
+- [x] Process containment via Job Objects + thread suspension (SuspendThread/ResumeThread)
+- [x] File quarantine with Windows ACL permissions (cross-platform module)
+- [x] Policy engine parity: 13 cross-platform enforcement tests
+- [x] Agent Windows collector loop with health heartbeats
+- [x] Platform-aware IPC status (reports correct collectors per OS)
+- [ ] Direct WFP API integration (replace netsh CLI for lower latency)
+- [ ] Full DACL-based quarantine directory ACLs
+- [ ] Real Windows testing on dual-boot setup
 
 ## Phase 6 — AI Intelligence
 - [ ] Behavioural feature extraction

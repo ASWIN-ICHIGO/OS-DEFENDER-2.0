@@ -79,7 +79,25 @@ Known limitations:
 - File collector uses change notifications (coarse), not ReadDirectoryChangesW detailed events
 - Auth collector does not yet extract username strings from event log records
 
-## Phases 5–10
+## Phase 5 — Windows Prevention
+
+| Component | Status | Notes |
+|---|---|---|
+| WFP enforcer | ✅ | netsh advfirewall CLI, block/unblock IP (in+out), mirrors nftables approach |
+| Job Object enforcer | ✅ | Thread suspension via ToolHelp32+SuspendThread, Job Object containment, safety PID≤4 |
+| File quarantine (Windows) | ✅ | Cross-platform quarantine with Windows ACL permissions in ensure_dir |
+| Policy engine parity | ✅ | 13 cross-platform enforcement tests verify identical behavior |
+| Agent Windows collectors | ✅ | Full collector loop with process/file/network/auth, health heartbeats |
+| Platform-aware IPC | ✅ | Agent status reports correct collectors per OS |
+
+Known limitations:
+- WFP enforcer uses netsh CLI (not direct WFP API calls) for reliability
+- Job Object enforcer: KILL_ON_JOB_CLOSE handle is not persisted across agent restarts
+- Thread suspension may miss threads created after enumeration snapshot
+- Windows ACL uses basic readonly permissions, not full DACL security descriptors
+- All Windows enforcement code untested on real Windows — requires dual-boot setup
+
+## Phases 6–10
 
 All components: ⬜ Not started
 

@@ -112,7 +112,17 @@ async fn main() -> Result<()> {
         })
     };
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    let collector_handle = {
+        let state = Arc::clone(&state);
+        let interval_ms = args.poll_interval_ms;
+        let watch_dirs = args.watch_dirs.clone();
+        tokio::spawn(async move {
+            run_windows_collectors(state, interval_ms, &watch_dirs).await;
+        })
+    };
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let collector_handle = tokio::spawn(async {
         warn!("no platform collectors available for this OS");
     });
@@ -232,6 +242,109 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
 
         if tick.is_multiple_of(15) {
             proc_tree.refresh();
+        }
+
+        if tick.is_multiple_of(30) {
+            let mut s = state.lock().await;
+            let assessment = s.health.assess();
+            if !assessment.overall_healthy {
+                for spot in &assessment.blind_spots {
+                    warn!(blind_spot = %spot, "visibility gap");
+                }
+            }
+            info!(
+                events = s.events_processed,
+                alerts = s.alerts_generated,
+                actions = s.actions_taken,
+                healthy = assessment.overall_healthy,
+                "periodic health check"
+            );
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(interval_ms)).await;
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn run_windows_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, watch_dirs: &str) {
+    use os_defender_core::platform::windows::{
+        WindowsProcessCollector, WindowsFileCollector,
+        WindowsNetworkCollector, WindowsAuthCollector,
+        WindowsSystemInfo,
+    };
+
+    let endpoint_id = WindowsSystemInfo::machine_id()
+        .unwrap_or_else(|_| "unknown-win".into());
+
+    let mut process_collector = WindowsProcessCollector::new(endpoint_id.clone());
+    let mut network_collector = WindowsNetworkCollector::new(endpoint_id.clone());
+    let mut auth_collector = WindowsAuthCollector::new(endpoint_id.clone());
+
+    let mut file_collector = match WindowsFileCollector::new(endpoint_id.clone()) {
+        Ok(mut fc) => {
+            for dir in watch_dirs.split(',') {
+                let trimmed = dir.trim();
+                if std::path::Path::new(trimmed).is_dir() {
+                    match fc.watch_path(std::path::Path::new(trimmed)) {
+                        Ok(()) => info!(dir = %trimmed, "watching directory"),
+                        Err(e) => warn!(dir = %trimmed, %e, "cannot watch directory"),
+                    }
+                }
+            }
+            Some(fc)
+        }
+        Err(e) => {
+            warn!(%e, "file collector unavailable");
+            None
+        }
+    };
+
+    info!("all Windows collectors started");
+
+    let mut tick: u64 = 0;
+    loop {
+        tick += 1;
+
+        match process_collector.poll_processes().await {
+            Ok(events) => {
+                let mut s = state.lock().await;
+                let ep = s.events_processed;
+                s.health.record_heartbeat("windows-process", ep, 0);
+                ingest_events(&mut s, events);
+            }
+            Err(e) => warn!(collector = "process", %e, "poll error"),
+        }
+
+        match network_collector.poll_connections().await {
+            Ok(events) => {
+                let mut s = state.lock().await;
+                let ep = s.events_processed;
+                s.health.record_heartbeat("windows-network", ep, 0);
+                ingest_events(&mut s, events);
+            }
+            Err(e) => warn!(collector = "network", %e, "poll error"),
+        }
+
+        match auth_collector.poll_auth_events().await {
+            Ok(events) => {
+                let mut s = state.lock().await;
+                let ep = s.events_processed;
+                s.health.record_heartbeat("windows-auth", ep, 0);
+                ingest_events(&mut s, events);
+            }
+            Err(e) => warn!(collector = "auth", %e, "poll error"),
+        }
+
+        if let Some(ref mut fc) = file_collector {
+            match fc.poll_file_events().await {
+                Ok(events) => {
+                    let mut s = state.lock().await;
+                    let ep = s.events_processed;
+                    s.health.record_heartbeat("windows-file", ep, 0);
+                    ingest_events(&mut s, events);
+                }
+                Err(e) => warn!(collector = "file", %e, "poll error"),
+            }
         }
 
         if tick.is_multiple_of(30) {
@@ -396,6 +509,23 @@ async fn handle_ipc_client(
         let response = match request {
             ipc::IpcRequest::Status => {
                 let s = state.lock().await;
+                let collectors = if cfg!(target_os = "linux") {
+                    vec![
+                        "linux-process".into(),
+                        "linux-network".into(),
+                        "linux-auth".into(),
+                        "linux-file".into(),
+                    ]
+                } else if cfg!(target_os = "windows") {
+                    vec![
+                        "windows-process".into(),
+                        "windows-network".into(),
+                        "windows-auth".into(),
+                        "windows-file".into(),
+                    ]
+                } else {
+                    vec![]
+                };
                 ipc::IpcResponse::Status(ipc::AgentStatus {
                     running: true,
                     uptime_secs: 0,
@@ -403,12 +533,7 @@ async fn handle_ipc_client(
                     alerts_generated: s.alerts_generated,
                     actions_taken: s.actions_taken,
                     policy_mode: format!("{:?}", s.policy.mode()),
-                    collectors_active: vec![
-                        "linux-process".into(),
-                        "linux-network".into(),
-                        "linux-auth".into(),
-                        "linux-file".into(),
-                    ],
+                    collectors_active: collectors,
                     version: env!("CARGO_PKG_VERSION").to_string(),
                 })
             }
