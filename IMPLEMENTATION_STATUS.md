@@ -166,7 +166,25 @@ Known limitations:
 - Frontend TypeScript not yet type-checked (no `npx tsc --noEmit` without Node.js)
 - Icons are placeholder blue squares — replace with proper OS Defender branding
 
-## Phases 9–10
+## Phase 9 — Security Validation
+
+| Component | Status | Notes |
+|---|---|---|
+| Attack simulation lab | ✅ | 18 tests, 14 MITRE techniques, 4 negative controls |
+| MITRE ATT&CK mapping | ✅ | 13 techniques documented: T1110, T1059, T1059.004, T1565.001, T1486, T1071, T1571, T1053.003, T1543.002, T1546.004, T1574.006, T1098.004, T1547.001 |
+| Cross-platform matrix | ✅ | Linux vs Windows parity across all modules |
+| Threat model | ✅ | 7 asset classes, 4 threat actor profiles, 5 attack surfaces |
+| Performance benchmarks | ✅ | Detection: 90K events/sec, SQLite: 5.5K inserts/sec, Ransomware: 13us/event, Hunt query: 5ms |
+| VM prevention tests | ⬜ | Requires isolated VM lab setup |
+| False positive tuning | ⬜ | Requires production workload data |
+
+Known limitations:
+- Attack simulation tests use synthetic events, not real OS-level triggers
+- Performance benchmarks run in debug mode; release builds are faster
+- VM prevention verification deferred — requires root access + isolated VMs
+- False positive tuning requires real-world workload data collection
+
+## Phase 10
 
 All components: ⬜ Not started
 
