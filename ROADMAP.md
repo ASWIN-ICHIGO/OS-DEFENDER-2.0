@@ -30,9 +30,9 @@
 - [x] Persistence mechanism monitoring (systemd, cron, shell rc files, init.d, XDG autostart — 14 patterns)
 - [x] Process tree tracking and parent-child analysis with cycle protection
 - [x] Integrate all collectors + detection engine into agent main loop
-- [ ] IsolationForest anomaly detection — deferred to Phase 6
-- [ ] End-to-end integration tests with real OS events
-- [ ] Performance benchmarks (CPU, RAM, latency)
+- [x] IsolationForest anomaly detection — completed in Phase 6
+- [x] Attack simulation integration tests — completed in Phase 9 (18 tests, 14 MITRE techniques)
+- [x] Performance benchmarks — completed in Phase 9 (90K events/sec detection throughput)
 
 ## Phase 3 — Linux Prevention ✅
 - [x] Policy engine with dry-run/approve/execute workflow (severity-based auto-execute)

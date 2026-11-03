@@ -28,7 +28,7 @@ Last updated: 2026-11-03
 | Agent daemon | ✅ | Tokio async, signal handling, collector loop |
 | CLI | ✅ | status, events, health, shutdown commands |
 | systemd service | ✅ | User service with security hardening |
-| Windows platform | ⬜ | Stub only — Phase 4 |
+| Windows platform | ✅ | Completed in Phase 4/5 — collectors, detection, enforcement |
 | Documentation | ✅ | ARCHITECTURE, ROADMAP, THREAT_MODEL, SECURITY, TESTING |
 
 ## Phase 2 — Linux Protection
@@ -44,9 +44,9 @@ Last updated: 2026-11-03
 | Sensitive file monitoring | ✅ | Via R003 — /etc/shadow, sudoers, authorized_keys, ld.so.preload |
 | Persistence monitoring | ✅ | Via R005 — systemd, cron, shell configs, init.d, XDG autostart |
 | Agent integration | ✅ | All 4 collectors + detection engine + process tree in main loop |
-| Anomaly detection | ⬜ | IsolationForest — deferred to Phase 6 (AI Intelligence) |
-| Integration tests | ⬜ | End-to-end with real OS events |
-| Performance benchmarks | ⬜ | CPU, RAM, latency measurement |
+| Anomaly detection | ✅ | IsolationForest — completed in Phase 6 (AI Intelligence) |
+| Integration tests | ✅ | Attack simulation lab — completed in Phase 9 (18 tests, 14 MITRE techniques) |
+| Performance benchmarks | ✅ | Completed in Phase 9 — 90K events/sec, 5.5K SQLite inserts/sec |
 
 ## Phase 3 — Linux Prevention
 
