@@ -69,6 +69,8 @@ enum Commands {
     Persistence,
     /// Verify agent integrity
     Integrity,
+    /// Check for available updates
+    Update,
     /// Request agent shutdown
     Shutdown,
 }
@@ -111,6 +113,7 @@ async fn main() -> Result<()> {
         Commands::Posture => ipc::IpcRequest::GetPosture,
         Commands::Persistence => ipc::IpcRequest::GetPersistence,
         Commands::Integrity => ipc::IpcRequest::VerifyIntegrity,
+        Commands::Update => ipc::IpcRequest::CheckUpdate,
         Commands::Shutdown => ipc::IpcRequest::Shutdown,
     };
 
@@ -267,6 +270,20 @@ fn print_response(response: &ipc::IpcResponse) {
                 for m in &result.missing {
                     println!("  MISSING: {m}");
                 }
+            }
+        }
+        ipc::IpcResponse::UpdateInfo(info) => {
+            println!("Current version: {}", info.current_version);
+            if info.update_available {
+                println!("Update available: {}", info.latest_version.as_deref().unwrap_or("unknown"));
+                if let Some(ref notes) = info.release_notes {
+                    println!("Release notes: {notes}");
+                }
+                if let Some(ref url) = info.download_url {
+                    println!("Download: {url}");
+                }
+            } else {
+                println!("You are running the latest version.");
             }
         }
         ipc::IpcResponse::Ok => println!("OK"),

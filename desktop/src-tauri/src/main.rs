@@ -126,9 +126,16 @@ async fn verify_integrity() -> Result<Value, String> {
     response_to_value(resp)
 }
 
+#[tauri::command]
+async fn check_update() -> Result<Value, String> {
+    let resp = send_request(&IpcRequest::CheckUpdate).await?;
+    response_to_value(resp)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_agent_status,
             get_events,
@@ -143,6 +150,7 @@ fn main() {
             get_posture,
             get_persistence,
             verify_integrity,
+            check_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OS Defender desktop application");

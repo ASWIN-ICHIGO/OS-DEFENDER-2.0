@@ -60,6 +60,12 @@
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/ASWIN-ICHIGO/os-defender-2.0/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
     }
   }
 }

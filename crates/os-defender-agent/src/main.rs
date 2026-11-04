@@ -654,6 +654,13 @@ async fn handle_ipc_client(
                 let result = tp.verify();
                 ipc::IpcResponse::IntegrityStatus(Box::new(result))
             }
+            ipc::IpcRequest::CheckUpdate => {
+                let checker = os_defender_core::update::UpdateChecker::new(
+                    env!("CARGO_PKG_VERSION"),
+                    os_defender_core::update::UpdateConfig::default(),
+                );
+                ipc::IpcResponse::UpdateInfo(checker.no_update_info())
+            }
             ipc::IpcRequest::Shutdown => {
                 info!("shutdown requested via IPC");
                 ipc::IpcResponse::Ok

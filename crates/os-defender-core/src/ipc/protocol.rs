@@ -19,6 +19,7 @@ pub enum IpcRequest {
     GetPosture,
     GetPersistence,
     VerifyIntegrity,
+    CheckUpdate,
     Shutdown,
 }
 
@@ -36,6 +37,7 @@ pub enum IpcResponse {
     PostureReport(Box<crate::advanced::posture::PostureReport>),
     PersistenceEntries(Vec<crate::advanced::persistence::PersistenceEntry>),
     IntegrityStatus(Box<crate::advanced::tamper::TamperCheckResult>),
+    UpdateInfo(crate::update::UpdateInfo),
     Ok,
     Error { message: String },
 }

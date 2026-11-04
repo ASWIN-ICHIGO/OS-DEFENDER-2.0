@@ -38,6 +38,11 @@ data/*.jsonl
 # Logs
 *.log
 
+# Signing keys (never commit private keys)
+keys/
+*.key
+*.pem
+
 # Build artifacts
 *.deb
 *.rpm

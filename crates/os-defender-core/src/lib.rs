@@ -7,3 +7,4 @@ pub mod storage;
 pub mod health;
 pub mod ipc;
 pub mod advanced;
+pub mod update;

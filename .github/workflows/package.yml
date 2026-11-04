@@ -27,6 +27,17 @@ jobs:
         with:
           name: os-defender-linux-deb
           path: target/packages/*.deb
+      - name: Sign binaries
+        if: env.SIGNING_PRIVATE_KEY != ''
+        env:
+          SIGNING_PRIVATE_KEY: ${{ secrets.SIGNING_PRIVATE_KEY }}
+        run: |
+          echo "$SIGNING_PRIVATE_KEY" > /tmp/signing.key
+          chmod 600 /tmp/signing.key
+          chmod +x scripts/sign-binary.sh
+          ./scripts/sign-binary.sh target/release/os-defender-agent /tmp/signing.key
+          ./scripts/sign-binary.sh target/release/os-defender /tmp/signing.key
+          rm /tmp/signing.key
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
@@ -34,6 +45,10 @@ jobs:
           path: |
             target/release/os-defender-agent
             target/release/os-defender
+            target/release/os-defender-agent.sha256
+            target/release/os-defender-agent.sig
+            target/release/os-defender.sha256
+            target/release/os-defender.sig
 
   build-windows:
     name: Build & Package (Windows)
@@ -44,6 +59,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build release
         run: cargo build --release
+      - name: Compute checksums
+        shell: pwsh
+        run: |
+          $agent = Get-FileHash target/release/os-defender-agent.exe -Algorithm SHA256
+          $cli = Get-FileHash target/release/os-defender.exe -Algorithm SHA256
+          $agent.Hash.ToLower() | Out-File -NoNewline target/release/os-defender-agent.exe.sha256
+          $cli.Hash.ToLower() | Out-File -NoNewline target/release/os-defender.exe.sha256
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
@@ -51,6 +73,8 @@ jobs:
           path: |
             target/release/os-defender-agent.exe
             target/release/os-defender.exe
+            target/release/os-defender-agent.exe.sha256
+            target/release/os-defender.exe.sha256
 
   release:
     name: Create Release
@@ -68,6 +92,9 @@ jobs:
             os-defender-linux-deb/*.deb
             os-defender-linux-binaries/os-defender-agent
             os-defender-linux-binaries/os-defender
+            os-defender-linux-binaries/*.sha256
+            os-defender-linux-binaries/*.sig
             os-defender-windows-binaries/os-defender-agent.exe
             os-defender-windows-binaries/os-defender.exe
+            os-defender-windows-binaries/*.sha256
           generate_release_notes: true
