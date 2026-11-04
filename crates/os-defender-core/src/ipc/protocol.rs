@@ -28,6 +28,7 @@ pub enum IpcRequest {
 pub enum IpcResponse {
     Status(AgentStatus),
     Events(Vec<crate::events::NormalizedEvent>),
+    Alerts(Vec<crate::detection::Alert>),
     Health(crate::health::VisibilityAssessment),
     AuditLog(Vec<crate::response::AuditEntry>),
     PolicyMode(crate::response::PolicyMode),

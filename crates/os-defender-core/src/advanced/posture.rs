@@ -89,18 +89,7 @@ impl PostureAssessor {
     }
 
     pub fn assess(&self) -> PostureReport {
-        let checks = vec![
-            self.check_shadow_permissions(),
-            self.check_sshd_root_login(),
-            self.check_sshd_password_auth(),
-            self.check_firewall_active(),
-            self.check_suid_audit(),
-            self.check_tmp_noexec(),
-            self.check_core_dumps_disabled(),
-            self.check_kernel_aslr(),
-            self.check_unattended_upgrades(),
-            self.check_no_empty_passwords(),
-        ];
+        let checks = self.platform_checks();
 
         let total = checks.iter().filter(|c| c.status != CheckStatus::Skipped).count();
         let passed = checks.iter().filter(|c| c.status == CheckStatus::Pass).count();
@@ -430,6 +419,50 @@ impl PostureAssessor {
         }
     }
 
+    fn platform_checks(&self) -> Vec<PostureCheck> {
+        #[cfg(target_os = "linux")]
+        {
+            vec![
+                self.check_shadow_permissions(),
+                self.check_sshd_root_login(),
+                self.check_sshd_password_auth(),
+                self.check_firewall_active(),
+                self.check_suid_audit(),
+                self.check_tmp_noexec(),
+                self.check_core_dumps_disabled(),
+                self.check_kernel_aslr(),
+                self.check_unattended_upgrades(),
+                self.check_no_empty_passwords(),
+            ]
+        }
+        #[cfg(target_os = "windows")]
+        {
+            vec![
+                self.check_windows_firewall(),
+                self.check_windows_uac(),
+                self.check_windows_defender(),
+                self.check_windows_updates(),
+                self.check_windows_rdp(),
+                self.check_windows_guest_account(),
+                self.check_windows_bitlocker(),
+                self.check_windows_smb_signing(),
+                self.check_windows_powershell_logging(),
+                self.check_windows_audit_policy(),
+            ]
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            vec![PostureCheck {
+                id: "SEC-000".into(),
+                category: "platform".into(),
+                description: "Posture checks not available for this OS".into(),
+                status: CheckStatus::Skipped,
+                detail: "Unsupported platform".into(),
+                remediation: String::new(),
+            }]
+        }
+    }
+
     fn check_no_empty_passwords(&self) -> PostureCheck {
         let shadow = match fs::read_to_string("/etc/shadow") {
             Ok(c) => c,
@@ -470,6 +503,188 @@ impl PostureAssessor {
                 format!("Empty passwords: {}", empty_pw.join(", "))
             },
             remediation: "Lock or set passwords for accounts: passwd -l <user>".into(),
+        }
+    }
+
+    // --- Windows posture checks ---
+
+    #[cfg(target_os = "windows")]
+    fn run_cmd_check(&self, cmd: &str, args: &[&str]) -> Option<String> {
+        std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_firewall(&self) -> PostureCheck {
+        let output = self.run_cmd_check("netsh", &["advfirewall", "show", "allprofiles", "state"]);
+        let all_on = output
+            .as_deref()
+            .map(|o| o.matches("ON").count() >= 3)
+            .unwrap_or(false);
+        PostureCheck {
+            id: "WIN-001".into(),
+            category: "network".into(),
+            description: "Windows Firewall enabled (all profiles)".into(),
+            status: if all_on { CheckStatus::Pass } else { CheckStatus::Fail },
+            detail: output.unwrap_or_else(|| "cannot query firewall".into()),
+            remediation: "Enable Windows Firewall for Domain, Private and Public profiles".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_uac(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "reg",
+            &["query", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "/v", "EnableLUA"],
+        );
+        let enabled = output.as_deref().map(|o| o.contains("0x1")).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-002".into(),
+            category: "access-control".into(),
+            description: "User Account Control (UAC) enabled".into(),
+            status: if enabled { CheckStatus::Pass } else { CheckStatus::Fail },
+            detail: output.unwrap_or_else(|| "cannot read UAC status".into()),
+            remediation: "Enable UAC via Group Policy or registry EnableLUA=1".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_defender(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "powershell",
+            &["-NoProfile", "-Command", "(Get-MpComputerStatus).AntivirusEnabled"],
+        );
+        let enabled = output.as_deref().map(|o| o.trim() == "True").unwrap_or(false);
+        PostureCheck {
+            id: "WIN-003".into(),
+            category: "antivirus".into(),
+            description: "Windows Defender antivirus active".into(),
+            status: if enabled { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: output.unwrap_or_else(|| "cannot query Defender status".into()),
+            remediation: "Enable Windows Defender or install a supported antivirus".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_updates(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "reg",
+            &["query", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update", "/v", "AUOptions"],
+        );
+        let auto = output.as_deref().map(|o| {
+            o.contains("0x3") || o.contains("0x4")
+        }).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-004".into(),
+            category: "updates".into(),
+            description: "Automatic Windows Updates enabled".into(),
+            status: if auto { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: output.unwrap_or_else(|| "cannot read update policy".into()),
+            remediation: "Enable automatic updates via Group Policy or Settings".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_rdp(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "reg",
+            &["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server", "/v", "fDenyTSConnections"],
+        );
+        let denied = output.as_deref().map(|o| o.contains("0x1")).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-005".into(),
+            category: "remote-access".into(),
+            description: "Remote Desktop disabled (or NLA enforced)".into(),
+            status: if denied { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: if denied { "RDP connections denied".into() } else { "RDP may be enabled".into() },
+            remediation: "Disable RDP if not needed, or enforce Network Level Authentication".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_guest_account(&self) -> PostureCheck {
+        let output = self.run_cmd_check("net", &["user", "Guest"]);
+        let active = output.as_deref().map(|o| {
+            o.lines().any(|l| l.contains("Account active") && l.contains("Yes"))
+        }).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-006".into(),
+            category: "authentication".into(),
+            description: "Guest account disabled".into(),
+            status: if active { CheckStatus::Fail } else { CheckStatus::Pass },
+            detail: if active { "Guest account is ACTIVE".into() } else { "Guest account disabled".into() },
+            remediation: "Disable Guest account: net user Guest /active:no".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_bitlocker(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "powershell",
+            &["-NoProfile", "-Command", "(Get-BitLockerVolume -MountPoint C:).ProtectionStatus"],
+        );
+        let on = output.as_deref().map(|o| o.trim() == "On").unwrap_or(false);
+        PostureCheck {
+            id: "WIN-007".into(),
+            category: "encryption".into(),
+            description: "BitLocker encryption enabled on C:".into(),
+            status: if on { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: output.unwrap_or_else(|| "cannot query BitLocker".into()),
+            remediation: "Enable BitLocker on the system drive".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_smb_signing(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "reg",
+            &["query", r"HKLM\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters", "/v", "RequireSecuritySignature"],
+        );
+        let required = output.as_deref().map(|o| o.contains("0x1")).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-008".into(),
+            category: "network".into(),
+            description: "SMB signing required".into(),
+            status: if required { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: output.unwrap_or_else(|| "cannot read SMB signing policy".into()),
+            remediation: "Enable RequireSecuritySignature in LanManServer parameters".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_powershell_logging(&self) -> PostureCheck {
+        let output = self.run_cmd_check(
+            "reg",
+            &["query", r"HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging", "/v", "EnableScriptBlockLogging"],
+        );
+        let enabled = output.as_deref().map(|o| o.contains("0x1")).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-009".into(),
+            category: "logging".into(),
+            description: "PowerShell script block logging enabled".into(),
+            status: if enabled { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: output.unwrap_or_else(|| "cannot read PS logging policy".into()),
+            remediation: "Enable ScriptBlockLogging via Group Policy".into(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_audit_policy(&self) -> PostureCheck {
+        let output = self.run_cmd_check("auditpol", &["/get", "/category:*"]);
+        let has_logon = output.as_deref().map(|o| {
+            o.lines().any(|l| l.contains("Logon") && (l.contains("Success and Failure") || l.contains("Success")))
+        }).unwrap_or(false);
+        PostureCheck {
+            id: "WIN-010".into(),
+            category: "logging".into(),
+            description: "Windows audit policy for logon events".into(),
+            status: if has_logon { CheckStatus::Pass } else { CheckStatus::Warn },
+            detail: if has_logon { "Logon auditing configured".into() } else { "Logon auditing may not be configured".into() },
+            remediation: "Configure audit policy: auditpol /set /subcategory:\"Logon\" /success:enable /failure:enable".into(),
         }
     }
 }

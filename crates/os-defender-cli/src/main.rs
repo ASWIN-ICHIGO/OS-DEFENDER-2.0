@@ -146,6 +146,24 @@ fn print_response(response: &ipc::IpcResponse) {
             println!("  Actions taken:    {}", status.actions_taken);
             println!("  Active collectors: {}", status.collectors_active.join(", "));
         }
+        ipc::IpcResponse::Alerts(alerts) => {
+            if alerts.is_empty() {
+                println!("No alerts.");
+            } else {
+                for alert in alerts {
+                    let mitre = alert.mitre_techniques.join(",");
+                    println!(
+                        "[{}] {} — {} (confidence: {:.0}%, rule: {}, MITRE: {})",
+                        alert.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                        alert.severity,
+                        alert.title,
+                        alert.confidence * 100.0,
+                        alert.rule_id.as_deref().unwrap_or("-"),
+                        if mitre.is_empty() { "-" } else { &mitre },
+                    );
+                }
+            }
+        }
         ipc::IpcResponse::Events(events) => {
             if events.is_empty() {
                 println!("No events.");

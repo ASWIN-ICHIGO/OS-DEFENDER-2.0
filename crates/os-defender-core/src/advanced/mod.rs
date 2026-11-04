@@ -1,3 +1,4 @@
+pub mod ai_bridge;
 pub mod ransomware;
 pub mod persistence;
 pub mod file_intel;

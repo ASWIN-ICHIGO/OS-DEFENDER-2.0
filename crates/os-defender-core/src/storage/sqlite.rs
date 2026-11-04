@@ -152,6 +152,48 @@ impl SqliteStore {
         Ok(count)
     }
 
+    pub fn insert_alert(&self, alert: &crate::detection::Alert) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let payload = serde_json::to_string(alert)?;
+        conn.execute(
+            "INSERT OR IGNORE INTO alerts (alert_id, event_id, rule_id, severity, title, description, confidence, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                alert.alert_id.to_string(),
+                alert.event_id.to_string(),
+                alert.rule_id.as_deref().unwrap_or(""),
+                alert.severity.to_string(),
+                alert.title,
+                alert.description,
+                alert.confidence,
+                payload,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_alerts(&self, limit: u32) -> Result<Vec<crate::detection::Alert>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM alerts ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let alerts = stmt
+            .query_map(params![limit], |row| {
+                let payload: String = row.get(0)?;
+                Ok(payload)
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|json| serde_json::from_str(&json).ok())
+            .collect();
+        Ok(alerts)
+    }
+
+    pub fn alert_count(&self) -> Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let count: u64 = conn.query_row("SELECT COUNT(*) FROM alerts", [], |row| row.get(0))?;
+        Ok(count)
+    }
+
     pub fn get_events_by_type(&self, event_type: &str, limit: u32) -> Result<Vec<NormalizedEvent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -215,6 +257,63 @@ mod tests {
         store.insert_event(&event).unwrap();
         store.insert_event(&event).unwrap(); // same fingerprint
         assert_eq!(store.event_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn insert_and_retrieve_alert() {
+        use crate::detection::Alert;
+
+        let store = SqliteStore::open_in_memory().unwrap();
+
+        let event = NormalizedEvent::new(
+            "ep".into(),
+            OsType::Linux,
+            EventType::Process,
+            Severity::High,
+        );
+        store.insert_event(&event).unwrap();
+
+        let alert = Alert::from_rule(
+            event.event_id,
+            "R001",
+            Severity::High,
+            "Suspicious process".into(),
+            "Reverse shell detected".into(),
+            0.95,
+        );
+        store.insert_alert(&alert).unwrap();
+        assert_eq!(store.alert_count().unwrap(), 1);
+
+        let alerts = store.get_alerts(10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].alert_id, alert.alert_id);
+        assert_eq!(alerts[0].title, "Suspicious process");
+    }
+
+    #[test]
+    fn alert_dedup() {
+        use crate::detection::Alert;
+
+        let store = SqliteStore::open_in_memory().unwrap();
+        let event = NormalizedEvent::new(
+            "ep".into(),
+            OsType::Linux,
+            EventType::Process,
+            Severity::High,
+        );
+        store.insert_event(&event).unwrap();
+
+        let alert = Alert::from_rule(
+            event.event_id,
+            "R001",
+            Severity::High,
+            "Test".into(),
+            "Test".into(),
+            0.9,
+        );
+        store.insert_alert(&alert).unwrap();
+        store.insert_alert(&alert).unwrap(); // same alert_id
+        assert_eq!(store.alert_count().unwrap(), 1);
     }
 
     #[test]

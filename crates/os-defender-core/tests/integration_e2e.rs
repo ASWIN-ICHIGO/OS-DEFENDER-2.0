@@ -3,7 +3,7 @@ use os_defender_core::{
     events::{NormalizedEvent, OsType, Severity},
     health::BlindSpotDetector,
     ipc::{
-        AgentStatus, AiEngineStatus, IpcListener, IpcRequest, IpcResponse, IpcStream,
+        AgentStatus, IpcListener, IpcRequest, IpcResponse, IpcStream,
     },
     response::{AuditLog, PolicyEngine, PolicyMode},
     storage::SqliteStore,
@@ -70,6 +70,15 @@ async fn handle_request(
                 },
             }
         }
+        IpcRequest::GetAlerts { limit } => {
+            let s = state.lock().await;
+            match s.store.get_alerts(*limit) {
+                Ok(alerts) => IpcResponse::Alerts(alerts),
+                Err(e) => IpcResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
         IpcRequest::GetHealth => {
             let mut s = state.lock().await;
             let assessment = s.health.assess();
@@ -102,7 +111,10 @@ async fn handle_request(
                 },
             }
         }
-        IpcRequest::GetAiStatus => IpcResponse::AiStatus(AiEngineStatus::default()),
+        IpcRequest::GetAiStatus => {
+            let bridge = os_defender_core::advanced::ai_bridge::AiBridge::new(std::path::Path::new("/tmp"));
+            IpcResponse::AiStatus(bridge.status())
+        }
         IpcRequest::GetPosture => {
             let report =
                 os_defender_core::advanced::posture::PostureAssessor::new("test").assess();
@@ -539,6 +551,9 @@ async fn e2e_detection_pipeline_through_ipc() {
 
         let alerts = s.engine.process_event(&event);
         s.store.insert_event(&event).unwrap();
+        for alert in &alerts {
+            s.store.insert_alert(alert).unwrap();
+        }
         s.events_processed += 1;
         s.alerts_generated += alerts.len() as u64;
     }
@@ -558,6 +573,18 @@ async fn e2e_detection_pipeline_through_ipc() {
         other => panic!("expected Events, got {other:?}"),
     }
 
+    // Verify alerts are retrievable
+    let resp = send_and_recv(&endpoint, &IpcRequest::GetAlerts { limit: 10 }).await;
+    match resp {
+        IpcResponse::Alerts(alerts) => {
+            assert!(!alerts.is_empty(), "detection engine should have generated alerts");
+            let a = &alerts[0];
+            assert!(!a.title.is_empty());
+            assert!(a.confidence > 0.0);
+        }
+        other => panic!("expected Alerts, got {other:?}"),
+    }
+
     // Verify status shows the alert
     let resp = send_and_recv(&endpoint, &IpcRequest::Status).await;
     match resp {
@@ -566,6 +593,45 @@ async fn e2e_detection_pipeline_through_ipc() {
             assert!(s.alerts_generated > 0, "detection engine should have generated alerts");
         }
         other => panic!("expected Status, got {other:?}"),
+    }
+
+    srv.abort();
+}
+
+#[tokio::test]
+async fn e2e_get_alerts_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let endpoint = dir.path().join("alerts_empty.sock").to_string_lossy().to_string();
+    let state = setup_agent(dir.path());
+    let srv = tokio::spawn(run_test_server(endpoint.clone(), Arc::clone(&state)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = send_and_recv(&endpoint, &IpcRequest::GetAlerts { limit: 10 }).await;
+    match resp {
+        IpcResponse::Alerts(alerts) => assert!(alerts.is_empty()),
+        other => panic!("expected Alerts, got {other:?}"),
+    }
+
+    srv.abort();
+}
+
+#[tokio::test]
+async fn e2e_ai_status_reflects_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let endpoint = dir.path().join("ai_real.sock").to_string_lossy().to_string();
+    let state = setup_agent(dir.path());
+    let srv = tokio::spawn(run_test_server(endpoint.clone(), Arc::clone(&state)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = send_and_recv(&endpoint, &IpcRequest::GetAiStatus).await;
+    match resp {
+        IpcResponse::AiStatus(ai) => {
+            // No ONNX model in temp dir, so model_loaded should be false
+            assert!(!ai.model_loaded);
+            assert!(!ai.available);
+            assert_eq!(ai.events_scored, 0);
+        }
+        other => panic!("expected AiStatus, got {other:?}"),
     }
 
     srv.abort();

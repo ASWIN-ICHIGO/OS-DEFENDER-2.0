@@ -49,6 +49,7 @@ struct AgentState {
     health: BlindSpotDetector,
     policy: PolicyEngine,
     audit: AuditLog,
+    ai: os_defender_core::advanced::ai_bridge::AiBridge,
     events_processed: u64,
     alerts_generated: u64,
     actions_taken: u64,
@@ -154,6 +155,9 @@ fn init_agent(args: &Args) -> Result<Arc<Mutex<AgentState>>> {
     let policy = PolicyEngine::new(policy_mode);
     let audit = AuditLog::recover_chain(&store.connection());
 
+    let ai_model_dir = db_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+    let ai = os_defender_core::advanced::ai_bridge::AiBridge::new(&ai_model_dir);
+
     info!(rules = engine.rule_count(), "detection rules loaded");
     info!(mode = %args.policy_mode, "policy engine initialized");
     info!(db = %db_path.display(), "database opened");
@@ -166,6 +170,7 @@ fn init_agent(args: &Args) -> Result<Arc<Mutex<AgentState>>> {
         health,
         policy,
         audit,
+        ai,
         events_processed: 0,
         alerts_generated: 0,
         actions_taken: 0,
@@ -431,6 +436,9 @@ fn ingest_events(state: &mut AgentState, events: Vec<NormalizedEvent>) {
 
         for alert in &alerts {
             log_alert(alert);
+            if let Err(e) = state.store.insert_alert(alert) {
+                error!(%e, "failed to store alert");
+            }
             state.alerts_generated += 1;
             process_response(state, alert);
         }
@@ -590,9 +598,13 @@ async fn handle_ipc_client(
                     },
                 }
             }
-            ipc::IpcRequest::GetAlerts { .. } => {
-                ipc::IpcResponse::Error {
-                    message: "not yet implemented".into(),
+            ipc::IpcRequest::GetAlerts { limit } => {
+                let s = state.lock().await;
+                match s.store.get_alerts(limit) {
+                    Ok(alerts) => ipc::IpcResponse::Alerts(alerts),
+                    Err(e) => ipc::IpcResponse::Error {
+                        message: e.to_string(),
+                    },
                 }
             }
             ipc::IpcRequest::GetHealth => {
@@ -631,7 +643,8 @@ async fn handle_ipc_client(
                 }
             }
             ipc::IpcRequest::GetAiStatus => {
-                ipc::IpcResponse::AiStatus(ipc::AiEngineStatus::default())
+                let s = state.lock().await;
+                ipc::IpcResponse::AiStatus(s.ai.status())
             }
             ipc::IpcRequest::ThreatHunt { ref query } => {
                 let s = state.lock().await;
@@ -645,9 +658,22 @@ async fn handle_ipc_client(
                 ipc::IpcResponse::PostureReport(Box::new(report))
             }
             ipc::IpcRequest::GetPersistence => {
-                let scanner = os_defender_core::advanced::persistence::LinuxPersistenceScanner::new();
-                let entries = scanner.scan();
-                ipc::IpcResponse::PersistenceEntries(entries)
+                #[cfg(target_os = "linux")]
+                {
+                    let scanner = os_defender_core::advanced::persistence::LinuxPersistenceScanner::new();
+                    let entries = scanner.scan();
+                    ipc::IpcResponse::PersistenceEntries(entries)
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let scanner = os_defender_core::advanced::persistence::WindowsPersistenceScanner::new();
+                    let entries = scanner.scan();
+                    ipc::IpcResponse::PersistenceEntries(entries)
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                {
+                    ipc::IpcResponse::PersistenceEntries(vec![])
+                }
             }
             ipc::IpcRequest::VerifyIntegrity => {
                 let tp = os_defender_core::advanced::tamper::TamperProtection::new(env!("CARGO_PKG_VERSION"));
