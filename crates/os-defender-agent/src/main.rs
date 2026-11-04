@@ -460,19 +460,10 @@ fn log_alert(alert: &Alert) {
 }
 
 async fn run_ipc_server(state: Arc<Mutex<AgentState>>) -> Result<()> {
-    use tokio::net::UnixListener;
-
-    let socket_path = ipc::user_socket_path();
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let _ = std::fs::remove_file(&socket_path);
-
-    let listener = UnixListener::bind(&socket_path)?;
-    info!(path = %socket_path.display(), "IPC listening");
+    let listener = ipc::IpcListener::bind_default().await?;
 
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = listener.accept().await?;
         let state = Arc::clone(&state);
 
         tokio::spawn(async move {
@@ -484,12 +475,12 @@ async fn run_ipc_server(state: Arc<Mutex<AgentState>>) -> Result<()> {
 }
 
 async fn handle_ipc_client(
-    stream: tokio::net::UnixStream,
+    stream: ipc::IpcStream,
     state: Arc<Mutex<AgentState>>,
 ) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut lines = BufReader::new(reader).lines();
 
     while let Some(line) = lines.next_line().await? {

@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use os_defender_core::ipc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 
 #[derive(Parser)]
 #[command(name = "os-defender", version, about = "OS-DEFENDER CLI")]
@@ -115,16 +114,11 @@ async fn main() -> Result<()> {
         Commands::Shutdown => ipc::IpcRequest::Shutdown,
     };
 
-    let socket_path = ipc::user_socket_path();
-    let stream = UnixStream::connect(&socket_path).await.map_err(|e| {
-        anyhow::anyhow!(
-            "cannot connect to agent at {}: {} — is the agent running?",
-            socket_path.display(),
-            e
-        )
+    let stream = ipc::IpcStream::connect_default().await.map_err(|e| {
+        anyhow::anyhow!("cannot connect to agent: {} — is the agent running?", e)
     })?;
 
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut json = serde_json::to_string(&request)?;
     json.push('\n');
     writer.write_all(json.as_bytes()).await?;

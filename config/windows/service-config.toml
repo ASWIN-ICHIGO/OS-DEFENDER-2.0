@@ -1,0 +1,20 @@
+[service]
+name = "OSDefenderAgent"
+display_name = "OS-DEFENDER Protection Agent"
+description = "OS-DEFENDER real-time endpoint protection agent"
+start_type = "automatic"
+binary_path = "C:\\Program Files\\OS-DEFENDER\\os-defender-agent.exe"
+
+[recovery]
+reset_period_secs = 86400
+first_failure = "restart"
+first_delay_ms = 5000
+second_failure = "restart"
+second_delay_ms = 10000
+subsequent_failure = "restart"
+subsequent_delay_ms = 30000
+
+[agent]
+pipe_name = "\\\\.\\pipe\\os-defender-agent"
+log_dir = "C:\\ProgramData\\OS-DEFENDER\\logs"
+db_path = "C:\\ProgramData\\OS-DEFENDER\\os-defender.db"

@@ -71,3 +71,22 @@ pub fn user_socket_path() -> std::path::PathBuf {
         .join(USER_SOCKET_DIR)
         .join("agent.sock")
 }
+
+pub const NAMED_PIPE_PREFIX: &str = r"\\.\pipe\os-defender-";
+
+#[cfg(windows)]
+pub fn user_pipe_name() -> String {
+    let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
+    format!("{}{}", NAMED_PIPE_PREFIX, user)
+}
+
+pub fn default_ipc_endpoint() -> String {
+    #[cfg(unix)]
+    {
+        user_socket_path().to_string_lossy().into_owned()
+    }
+    #[cfg(windows)]
+    {
+        user_pipe_name()
+    }
+}

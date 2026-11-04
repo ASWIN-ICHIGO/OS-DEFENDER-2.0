@@ -2,17 +2,15 @@
 
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 
-use os_defender_core::ipc::{user_socket_path, IpcRequest, IpcResponse};
+use os_defender_core::ipc::{IpcRequest, IpcResponse, IpcStream};
 
 async fn send_request(request: &IpcRequest) -> Result<IpcResponse, String> {
-    let sock = user_socket_path();
-    let stream = UnixStream::connect(&sock)
+    let stream = IpcStream::connect_default()
         .await
-        .map_err(|e| format!("Agent not running ({}): {}", sock.display(), e))?;
+        .map_err(|e| format!("Agent not running: {}", e))?;
 
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = tokio::io::split(stream);
 
     let mut payload = serde_json::to_string(request).map_err(|e| e.to_string())?;
     payload.push('\n');
