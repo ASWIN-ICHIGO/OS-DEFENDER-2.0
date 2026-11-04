@@ -14,6 +14,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
+#[cfg(target_os = "windows")]
+mod service;
+
 #[derive(Parser)]
 #[command(name = "os-defender-agent", version, about = "OS-DEFENDER protection agent")]
 struct Args {
@@ -26,17 +29,18 @@ struct Args {
     #[arg(long, default_value_t = 60)]
     heartbeat_timeout_secs: i64,
 
-    /// Directories to watch for file changes (comma-separated)
     #[arg(long, default_value = "/etc,/home")]
     watch_dirs: String,
 
-    /// Policy mode: dry_run (default), approve, execute
     #[arg(long, default_value = "dry_run")]
     policy_mode: String,
 
-    /// Quarantine directory for suspicious files
     #[arg(long, default_value = "~/.local/share/os-defender/quarantine")]
     quarantine_dir: String,
+
+    /// Run as a Windows service (SCM-managed lifecycle)
+    #[arg(long)]
+    service: bool,
 }
 
 struct AgentState {
@@ -50,8 +54,7 @@ struct AgentState {
     actions_taken: u64,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -62,6 +65,77 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    #[cfg(target_os = "windows")]
+    if args.service {
+        info!("starting as Windows service");
+        service::run_as_service().map_err(|e| anyhow::anyhow!("service dispatch failed: {e}"))?;
+        return Ok(());
+    }
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run_foreground(args))
+}
+
+async fn run_foreground(args: Args) -> Result<()> {
+    let state = init_agent(&args)?;
+
+    info!(version = env!("CARGO_PKG_VERSION"), "OS-DEFENDER agent starting");
+
+    let shutdown = tokio::signal::ctrl_c();
+
+    let collector_handle = spawn_collectors(&args, Arc::clone(&state));
+
+    let ipc_handle = {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) = run_ipc_server(state).await {
+                error!(%e, "IPC server error");
+            }
+        })
+    };
+
+    info!("agent running — press Ctrl+C to stop");
+    shutdown.await?;
+    info!("shutdown signal received");
+
+    collector_handle.abort();
+    ipc_handle.abort();
+
+    info!("OS-DEFENDER agent stopped");
+    Ok(())
+}
+
+/// Core agent loop used by both foreground mode and Windows service.
+pub async fn run_agent_core() -> Result<()> {
+    let args = Args::parse();
+    let state = init_agent(&args)?;
+
+    info!(version = env!("CARGO_PKG_VERSION"), "OS-DEFENDER agent starting (service mode)");
+
+    let collector_handle = spawn_collectors(&args, Arc::clone(&state));
+
+    let ipc_handle = {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) = run_ipc_server(state).await {
+                error!(%e, "IPC server error");
+            }
+        })
+    };
+
+    info!("agent running in service mode");
+
+    // In service mode, run until cancelled externally (via tokio::select in service.rs)
+    tokio::signal::ctrl_c().await.ok();
+
+    collector_handle.abort();
+    ipc_handle.abort();
+
+    info!("OS-DEFENDER agent stopped");
+    Ok(())
+}
+
+fn init_agent(args: &Args) -> Result<Arc<Mutex<AgentState>>> {
     let db_path = expand_tilde(&args.db_path);
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -82,10 +156,11 @@ async fn main() -> Result<()> {
 
     info!(rules = engine.rule_count(), "detection rules loaded");
     info!(mode = %args.policy_mode, "policy engine initialized");
+    info!(db = %db_path.display(), "database opened");
 
     let _quarantine_dir = expand_tilde(&args.quarantine_dir);
 
-    let state = Arc::new(Mutex::new(AgentState {
+    Ok(Arc::new(Mutex::new(AgentState {
         store,
         engine,
         health,
@@ -94,58 +169,36 @@ async fn main() -> Result<()> {
         events_processed: 0,
         alerts_generated: 0,
         actions_taken: 0,
-    }));
+    })))
+}
 
-    info!(version = env!("CARGO_PKG_VERSION"), "OS-DEFENDER agent starting");
-    info!(db = %db_path.display(), "database opened");
-
-    let shutdown = tokio::signal::ctrl_c();
-
-    // Start platform-specific collectors
+fn spawn_collectors(args: &Args, state: Arc<Mutex<AgentState>>) -> tokio::task::JoinHandle<()> {
     #[cfg(target_os = "linux")]
-    let collector_handle = {
-        let state = Arc::clone(&state);
+    {
         let interval_ms = args.poll_interval_ms;
         let watch_dirs = args.watch_dirs.clone();
         tokio::spawn(async move {
             run_linux_collectors(state, interval_ms, &watch_dirs).await;
         })
-    };
+    }
 
     #[cfg(target_os = "windows")]
-    let collector_handle = {
-        let state = Arc::clone(&state);
+    {
         let interval_ms = args.poll_interval_ms;
         let watch_dirs = args.watch_dirs.clone();
         tokio::spawn(async move {
             run_windows_collectors(state, interval_ms, &watch_dirs).await;
         })
-    };
+    }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    let collector_handle = tokio::spawn(async {
-        warn!("no platform collectors available for this OS");
-    });
-
-    // Start IPC listener
-    let ipc_handle = {
-        let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            if let Err(e) = run_ipc_server(state).await {
-                error!(%e, "IPC server error");
-            }
+    {
+        let _ = args;
+        let _ = state;
+        tokio::spawn(async {
+            warn!("no platform collectors available for this OS");
         })
-    };
-
-    info!("agent running — press Ctrl+C to stop");
-    shutdown.await?;
-    info!("shutdown signal received");
-
-    collector_handle.abort();
-    ipc_handle.abort();
-
-    info!("OS-DEFENDER agent stopped");
-    Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -618,6 +671,12 @@ async fn handle_ipc_client(
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/")
         && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("USERPROFILE")
     {
         return PathBuf::from(home).join(rest);
     }

@@ -38,11 +38,23 @@
     ],
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [],
+        "section": "utils",
+        "priority": "optional"
       },
       "appimage": {
         "bundleMediaFramework": false
+      },
+      "rpm": {
+        "depends": []
       }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": false
+      },
+      "wix": null
     }
   },
   "plugins": {

@@ -1,0 +1,19 @@
+[Unit]
+Description=OS-DEFENDER Protection Agent
+After=network.target
+Documentation=https://github.com/ASWIN-ICHIGO/os-defender-2.0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/os-defender-agent --db-path /var/lib/os-defender/os-defender.db --quarantine-dir /var/lib/os-defender/quarantine
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/os-defender
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
