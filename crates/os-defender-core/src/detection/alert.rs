@@ -58,6 +58,28 @@ impl Alert {
         }
     }
 
+    pub fn from_anomaly(
+        event_id: Uuid,
+        severity: Severity,
+        title: String,
+        description: String,
+        confidence: f64,
+    ) -> Self {
+        Self {
+            alert_id: Uuid::new_v4(),
+            event_id,
+            timestamp: Utc::now(),
+            source: DetectionSource::Anomaly,
+            rule_id: Some("AI-001".to_string()),
+            severity,
+            title,
+            description,
+            confidence,
+            factors: Vec::new(),
+            mitre_techniques: Vec::new(),
+        }
+    }
+
     pub fn with_factor(mut self, name: &str, weight: f64, description: &str) -> Self {
         self.factors.push(Factor {
             name: name.to_string(),

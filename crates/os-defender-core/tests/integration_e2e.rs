@@ -139,6 +139,9 @@ async fn handle_request(
             );
             IpcResponse::UpdateInfo(checker.no_update_info())
         }
+        IpcRequest::ScoreEvents { .. } => {
+            IpcResponse::AiScore(None)
+        }
         IpcRequest::Shutdown => IpcResponse::Ok,
         _ => IpcResponse::Error {
             message: "unhandled in test".into(),
@@ -657,4 +660,49 @@ async fn e2e_check_update() {
     }
 
     srv.abort();
+}
+
+#[tokio::test]
+async fn e2e_score_events_without_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let endpoint = dir.path().join("score.sock").to_string_lossy().to_string();
+    let state = setup_agent(dir.path());
+    let srv = tokio::spawn(run_test_server(endpoint.clone(), Arc::clone(&state)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let event = NormalizedEvent::new(
+        "test-ep".into(),
+        OsType::Linux,
+        os_defender_core::events::EventType::Process,
+        Severity::High,
+    );
+    let resp = send_and_recv(
+        &endpoint,
+        &IpcRequest::ScoreEvents { events: vec![event] },
+    )
+    .await;
+    match resp {
+        IpcResponse::AiScore(result) => {
+            assert!(result.is_none(), "no sidecar = None score");
+        }
+        other => panic!("expected AiScore, got {other:?}"),
+    }
+
+    srv.abort();
+}
+
+#[test]
+fn alert_from_anomaly_has_correct_source() {
+    use os_defender_core::detection::{Alert, DetectionSource};
+
+    let alert = Alert::from_anomaly(
+        uuid::Uuid::new_v4(),
+        Severity::Medium,
+        "AI Anomaly Detected".into(),
+        "high failed_login_rate".into(),
+        0.85,
+    );
+    assert_eq!(alert.source, DetectionSource::Anomaly);
+    assert_eq!(alert.rule_id.as_deref(), Some("AI-001"));
+    assert_eq!(alert.confidence, 0.85);
 }

@@ -20,6 +20,7 @@ pub enum IpcRequest {
     GetPersistence,
     VerifyIntegrity,
     CheckUpdate,
+    ScoreEvents { events: Vec<crate::events::NormalizedEvent> },
     Shutdown,
 }
 
@@ -39,6 +40,7 @@ pub enum IpcResponse {
     PersistenceEntries(Vec<crate::advanced::persistence::PersistenceEntry>),
     IntegrityStatus(Box<crate::advanced::tamper::TamperCheckResult>),
     UpdateInfo(crate::update::UpdateInfo),
+    AiScore(Option<crate::advanced::ai_bridge::AiScoreResult>),
     Ok,
     Error { message: String },
 }

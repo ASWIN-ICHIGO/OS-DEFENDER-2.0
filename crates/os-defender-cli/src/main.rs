@@ -69,6 +69,11 @@ enum Commands {
     Persistence,
     /// Verify agent integrity
     Integrity,
+    /// Show recent alerts
+    Alerts {
+        #[arg(short, long, default_value_t = 20)]
+        limit: u32,
+    },
     /// Check for available updates
     Update,
     /// Request agent shutdown
@@ -113,6 +118,7 @@ async fn main() -> Result<()> {
         Commands::Posture => ipc::IpcRequest::GetPosture,
         Commands::Persistence => ipc::IpcRequest::GetPersistence,
         Commands::Integrity => ipc::IpcRequest::VerifyIntegrity,
+        Commands::Alerts { limit } => ipc::IpcRequest::GetAlerts { limit: *limit },
         Commands::Update => ipc::IpcRequest::CheckUpdate,
         Commands::Shutdown => ipc::IpcRequest::Shutdown,
     };
@@ -302,6 +308,24 @@ fn print_response(response: &ipc::IpcResponse) {
                 }
             } else {
                 println!("You are running the latest version.");
+            }
+        }
+        ipc::IpcResponse::AiScore(result) => {
+            match result {
+                Some(r) => {
+                    let label = if r.is_anomaly { "ANOMALY" } else { "NORMAL" };
+                    println!("AI Score: {:.4} ({label})", r.score);
+                    if let Some(ref exp) = r.explanation {
+                        println!("  {}", exp.summary);
+                        for c in &exp.top_contributors {
+                            println!(
+                                "    {}: {:.2} (z={:.1}σ, {:.0}%)",
+                                c.feature, c.value, c.z_score, c.contribution_pct
+                            );
+                        }
+                    }
+                }
+                None => println!("AI scoring not available — sidecar not running"),
             }
         }
         ipc::IpcResponse::Ok => println!("OK"),

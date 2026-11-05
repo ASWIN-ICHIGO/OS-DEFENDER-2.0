@@ -158,6 +158,12 @@ fn init_agent(args: &Args) -> Result<Arc<Mutex<AgentState>>> {
     let ai_model_dir = db_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
     let ai = os_defender_core::advanced::ai_bridge::AiBridge::new(&ai_model_dir);
 
+    if ai.start_sidecar() {
+        info!("AI sidecar scoring enabled");
+    } else {
+        info!("AI sidecar not available — rule-based detection only");
+    }
+
     info!(rules = engine.rule_count(), "detection rules loaded");
     info!(mode = %args.policy_mode, "policy engine initialized");
     info!(db = %db_path.display(), "database opened");
@@ -427,9 +433,9 @@ async fn run_windows_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64,
 }
 
 fn ingest_events(state: &mut AgentState, events: Vec<NormalizedEvent>) {
-    for event in events {
-        let alerts = state.engine.process_event(&event);
-        if let Err(e) = state.store.insert_event(&event) {
+    for event in &events {
+        let alerts = state.engine.process_event(event);
+        if let Err(e) = state.store.insert_event(event) {
             error!(%e, "failed to store event");
         }
         state.events_processed += 1;
@@ -442,6 +448,55 @@ fn ingest_events(state: &mut AgentState, events: Vec<NormalizedEvent>) {
             state.alerts_generated += 1;
             process_response(state, alert);
         }
+    }
+
+    if !events.is_empty()
+        && state.ai.sidecar_running()
+        && let Some(result) = state.ai.score_events(&events)
+        && result.is_anomaly
+    {
+        let summary = result
+            .explanation
+            .as_ref()
+            .map(|e| e.summary.clone())
+            .unwrap_or_else(|| format!("AI anomaly score: {:.3}", result.score));
+
+        let factors: Vec<_> = result
+            .explanation
+            .as_ref()
+            .map(|e| {
+                e.top_contributors
+                    .iter()
+                    .map(|c| os_defender_core::detection::Factor {
+                        name: c.feature.clone(),
+                        weight: c.contribution_pct / 100.0,
+                        description: format!(
+                            "{:.1}σ from baseline (value={:.2}, expected={:.2})",
+                            c.z_score, c.value, c.baseline_mean
+                        ),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let representative_event = &events[0];
+        let confidence = (1.0 - result.score.abs().min(1.0)).max(0.5);
+        let mut alert = Alert::from_anomaly(
+            representative_event.event_id,
+            os_defender_core::events::Severity::Medium,
+            "AI Anomaly Detected".into(),
+            summary,
+            confidence,
+        );
+        alert.factors = factors;
+        alert.mitre_techniques = vec!["TA0001".into()];
+
+        log_alert(&alert);
+        if let Err(e) = state.store.insert_alert(&alert) {
+            error!(%e, "failed to store AI alert");
+        }
+        state.alerts_generated += 1;
+        process_response(state, &alert);
     }
 }
 
@@ -679,6 +734,11 @@ async fn handle_ipc_client(
                 let tp = os_defender_core::advanced::tamper::TamperProtection::new(env!("CARGO_PKG_VERSION"));
                 let result = tp.verify();
                 ipc::IpcResponse::IntegrityStatus(Box::new(result))
+            }
+            ipc::IpcRequest::ScoreEvents { events } => {
+                let mut s = state.lock().await;
+                let result = s.ai.score_events(&events);
+                ipc::IpcResponse::AiScore(result)
             }
             ipc::IpcRequest::CheckUpdate => {
                 let checker = os_defender_core::update::UpdateChecker::new(
