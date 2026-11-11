@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
@@ -12,7 +12,7 @@ use windows::Win32::System::JobObjects::{
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, OpenThread, SuspendThread, ResumeThread, TerminateProcess,
+    OpenProcess, OpenThread, SuspendThread, ResumeThread,
     PROCESS_ALL_ACCESS, THREAD_SUSPEND_RESUME,
 };
 
