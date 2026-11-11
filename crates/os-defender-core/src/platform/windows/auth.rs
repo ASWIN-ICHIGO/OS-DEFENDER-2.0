@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use windows::Win32::System::EventLog::{
     OpenEventLogW, ReadEventLogW, CloseEventLog,
-    EVENTLOG_SEQUENTIAL_READ, EVENTLOG_FORWARDS_READ,
+    EVENTLOG_SEQUENTIAL_READ, READ_EVENT_LOG_READ_FLAGS,
     EVENTLOGRECORD,
 };
 use windows::core::HSTRING;
@@ -38,11 +38,12 @@ impl WindowsAuthCollector {
             let mut bytes_read: u32 = 0;
             let mut min_bytes_needed: u32 = 0;
 
-            let flags = EVENTLOG_SEQUENTIAL_READ | EVENTLOG_FORWARDS_READ;
+            let flags =
+                READ_EVENT_LOG_READ_FLAGS(EVENTLOG_SEQUENTIAL_READ.0 | 0x0004); // EVENTLOG_FORWARDS_READ
 
             while ReadEventLogW(
                 handle,
-                flags.0,
+                flags,
                 0,
                 buffer.as_mut_ptr().cast(),
                 buffer.len() as u32,
