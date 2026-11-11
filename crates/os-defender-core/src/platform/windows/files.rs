@@ -2,10 +2,8 @@ use crate::events::{
     EventType, EvidenceRef, FileAction, FileContext, NormalizedEvent, OsType, Severity,
 };
 use crate::platform::{CollectorError, CollectorResult, FileCollector};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::mpsc;
 
 use windows::Win32::Storage::FileSystem::{
     FindFirstChangeNotificationW, FindNextChangeNotification, FindCloseChangeNotification,
@@ -21,6 +19,9 @@ struct WatchEntry {
     handle: HANDLE,
     path: PathBuf,
 }
+
+unsafe impl Send for WatchEntry {}
+unsafe impl Sync for WatchEntry {}
 
 pub struct WindowsFileCollector {
     endpoint_id: String,
