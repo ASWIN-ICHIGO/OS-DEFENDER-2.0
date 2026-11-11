@@ -576,7 +576,7 @@ fn log_alert(alert: &Alert) {
 }
 
 async fn run_ipc_server(state: Arc<Mutex<AgentState>>) -> Result<()> {
-    let listener = ipc::IpcListener::bind_default().await?;
+        #[cfg(target_os = "windows")]     let mut listener = ipc::IpcListener::bind_default().await?;     #[cfg(not(target_os = "windows"))]     let listener = ipc::IpcListener::bind_default().await?;
 
     loop {
         let stream = listener.accept().await?;
