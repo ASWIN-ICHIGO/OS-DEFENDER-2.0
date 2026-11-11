@@ -73,7 +73,7 @@ jobs:
       - name: Build Tauri desktop app
         working-directory: desktop
         run: |
-          npm ci
+          npm install
           npx tauri build --ci
       - name: Upload desktop packages
         uses: actions/upload-artifact@v4
@@ -122,7 +122,7 @@ jobs:
       - name: Build Tauri desktop app
         working-directory: desktop
         run: |
-          npm ci
+          npm install
           npx tauri build --ci
       - name: Upload NSIS installer
         uses: actions/upload-artifact@v4
@@ -176,7 +176,6 @@ jobs:
             os-defender-linux-binaries/os-defender-agent
             os-defender-linux-binaries/os-defender
             os-defender-linux-binaries/*.sha256
-            os-defender-linux-binaries/*.sig
             os-defender-linux-desktop/*.deb
             os-defender-linux-desktop/*.AppImage
             os-defender-windows-binaries/os-defender-agent.exe
