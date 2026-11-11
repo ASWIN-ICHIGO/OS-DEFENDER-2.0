@@ -46,7 +46,8 @@ impl WindowsProcessCollector {
             if Process32First(snap, &mut entry).is_ok() {
                 loop {
                     let name = String::from_utf8_lossy(
-                        &entry.szExeFile.iter().take_while(|&&c| c != 0).copied().collect::<Vec<u8>>(),
+&entry.szExeFile.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect::<Vec<u8>>(),
+
                     )
                     .to_string();
 
