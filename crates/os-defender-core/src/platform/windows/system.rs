@@ -7,7 +7,7 @@ impl WindowsSystemInfo {
         // Read MachineGuid from registry
         use windows::Win32::System::Registry::{
             RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ,
-            REG_SZ,
+            REG_VALUE_TYPE,
         };
         use windows::core::HSTRING;
 
@@ -16,28 +16,32 @@ impl WindowsSystemInfo {
 
         unsafe {
             let mut hkey = Default::default();
-            RegOpenKeyExW(
+            let open_err = RegOpenKeyExW(
                 HKEY_LOCAL_MACHINE,
                 &subkey,
                 0,
                 KEY_READ,
                 &mut hkey,
-            )
-            .map_err(|e| anyhow::anyhow!("cannot open registry key: {e}"))?;
+            );
+            if open_err.0 != 0 {
+                anyhow::bail!("cannot open registry key: {}", open_err.0);
+            }
 
             let mut buf_size: u32 = 256;
             let mut buffer = vec![0u16; buf_size as usize / 2];
-            let mut kind: u32 = 0;
+            let mut kind = REG_VALUE_TYPE::default();
 
-            RegQueryValueExW(
+            let query_err = RegQueryValueExW(
                 hkey,
                 &value_name,
                 None,
                 Some(&mut kind),
                 Some(buffer.as_mut_ptr().cast()),
                 Some(&mut buf_size),
-            )
-            .map_err(|e| anyhow::anyhow!("cannot read MachineGuid: {e}"))?;
+            );
+            if query_err.0 != 0 {
+                anyhow::bail!("cannot read MachineGuid: {}", query_err.0);
+            }
 
             let len = (buf_size as usize / 2).saturating_sub(1); // strip null terminator
             let guid = String::from_utf16_lossy(&buffer[..len]);
@@ -46,19 +50,22 @@ impl WindowsSystemInfo {
     }
 
     pub fn hostname() -> Result<String> {
+        use windows::core::PWSTR;
         use windows::Win32::System::SystemInformation::GetComputerNameExW;
         use windows::Win32::System::SystemInformation::ComputerNameDnsHostname;
 
         unsafe {
             let mut size: u32 = 0;
-            let _ = GetComputerNameExW(ComputerNameDnsHostname, None, &mut size);
+            let _ = GetComputerNameExW(ComputerNameDnsHostname, PWSTR::null(), &mut size);
             let mut buffer = vec![0u16; size as usize];
-            GetComputerNameExW(
+            let err = GetComputerNameExW(
                 ComputerNameDnsHostname,
-                Some(buffer.as_mut_ptr()),
+                PWSTR(buffer.as_mut_ptr()),
                 &mut size,
-            )
-            .map_err(|e| anyhow::anyhow!("GetComputerNameExW: {e}"))?;
+            );
+            if let Err(e) = err {
+                anyhow::bail!("GetComputerNameExW: {e}");
+            }
 
             Ok(String::from_utf16_lossy(&buffer[..size as usize]))
         }
