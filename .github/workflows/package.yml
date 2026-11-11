@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v2.0.0-alpha.1)"
+        required: true
+        default: "v2.0.0-alpha.1"
 
 env:
   CARGO_TERM_COLOR: always
@@ -162,7 +167,7 @@ jobs:
   release:
     name: Create Release
     needs: [build-linux, build-linux-desktop, build-windows, build-windows-desktop, build-ai]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -171,6 +176,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             os-defender-linux-deb/*.deb
             os-defender-linux-binaries/os-defender-agent
