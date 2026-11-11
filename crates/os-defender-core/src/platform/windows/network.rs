@@ -8,10 +8,10 @@ use std::net::Ipv4Addr;
 use std::pin::Pin;
 
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
+    GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID,
     TCP_TABLE_OWNER_PID_ALL,
 };
-use windows::Win32::Networking::WinSock::{AF_INET, MIB_TCP_STATE_LISTEN};
+use windows::Win32::Networking::WinSock::{AF_INET, TCPSTATE_LISTEN};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct ConnKey {
@@ -107,7 +107,7 @@ impl NetworkCollector for WindowsNetworkCollector {
                     continue;
                 }
 
-                let is_listen = *state == MIB_TCP_STATE_LISTEN.0 as u32;
+                let is_listen = *state == TCPSTATE_LISTEN.0 as u32;
                 let is_loopback = conn.remote_addr == "127.0.0.1" || conn.remote_addr == "0.0.0.0";
 
                 let direction = if is_listen || is_loopback {
