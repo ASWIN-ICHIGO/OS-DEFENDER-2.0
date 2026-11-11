@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import type { NormalizedEvent } from '../lib/types';
+import type { Alert } from '../lib/types';
 import { getAlerts } from '../lib/ipc';
 
 export function AlertsView() {
-  const [alerts, setAlerts] = useState<NormalizedEvent[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [limit, setLimit] = useState(50);
   const [loading, setLoading] = useState(true);
 
@@ -51,9 +51,9 @@ export function AlertsView() {
             </thead>
             <tbody>
               {alerts.map((a) => (
-                <tr key={a.event_id} className={`severity-row-${a.severity.toLowerCase()}`}>
+                <tr key={a.alert_id} className={`severity-row-${a.severity.toLowerCase()}`}>
                   <td className="mono">{new Date(a.timestamp).toLocaleString()}</td>
-                  <td>{a.event_type}</td>
+                  <td>{a.source}</td>
                   <td><span className={`badge badge-${sevColor(a.severity)}`}>{a.severity}</span></td>
                   <td className="mono truncate">{a.event_id.slice(0, 8)}</td>
                   <td className="truncate">{summarize(a)}</td>
@@ -76,10 +76,6 @@ function sevColor(s: string): string {
   }
 }
 
-function summarize(e: NormalizedEvent): string {
-  if (e.process_context) return `${e.process_context.name} (PID ${e.process_context.pid})`;
-  if (e.file_context) return `${e.file_context.action} ${e.file_context.path}`;
-  if (e.network_context) return `${e.network_context.protocol} → ${e.network_context.remote_addr ?? '?'}`;
-  if (e.auth_context) return `${e.auth_context.action} ${e.auth_context.username}`;
-  return e.event_type;
+function summarize(a: Alert): string {
+  return a.title;
 }
