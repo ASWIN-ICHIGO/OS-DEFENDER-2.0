@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import type { AgentStatus, NormalizedEvent, AiEngineStatus } from '../lib/types';
+import type { AgentStatus, NormalizedEvent, AiEngineStatus, Alert } from '../lib/types';
 import { getAgentStatus, getEvents, getAlerts, getAiStatus } from '../lib/ipc';
 
 export function Dashboard() {
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [recentEvents, setRecentEvents] = useState<NormalizedEvent[]>([]);
-  const [recentAlerts, setRecentAlerts] = useState<NormalizedEvent[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<Alert[]>([]);
   const [aiStatus, setAiStatus] = useState<AiEngineStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,11 +126,11 @@ export function Dashboard() {
             </thead>
             <tbody>
               {recentAlerts.map((a) => (
-                <tr key={a.event_id}>
+                <tr key={a.alert_id}>
                   <td className="mono">{new Date(a.timestamp).toLocaleTimeString()}</td>
-                  <td>{a.event_type}</td>
+                  <td>{a.source}</td>
                   <td><span className={`badge badge-${severityColor(a.severity)}`}>{a.severity}</span></td>
-                  <td className="truncate">{eventSummary(a)}</td>
+                  <td className="truncate">{a.title}</td>
                 </tr>
               ))}
             </tbody>
