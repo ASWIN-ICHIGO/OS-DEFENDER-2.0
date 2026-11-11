@@ -265,7 +265,7 @@ impl PostureAssessor {
             "/usr/bin/newgrp", "/usr/bin/gpasswd", "/usr/bin/chfn",
         ];
 
-        let mut unexpected = Vec::new();
+        let mut unexpected: Vec<String> = Vec::new();
         for dir in &["/usr/bin", "/usr/sbin"] {
             let Ok(read_dir) = fs::read_dir(dir) else { continue };
             for entry in read_dir.flatten() {
