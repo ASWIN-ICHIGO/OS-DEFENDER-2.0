@@ -155,8 +155,8 @@ jobs:
       - name: Package AI layer
         run: |
           mkdir -p ai-dist
-          cp -r ai/src ai-dist/
-          cp ai/pyproject.toml ai-dist/
+          cp -r ai/features ai/training ai/inference ai/llm ai-dist/
+          cp ai/sidecar.py ai/pyproject.toml ai-dist/
           tar czf ai-layer.tar.gz -C ai-dist .
       - name: Upload AI package
         uses: actions/upload-artifact@v4
