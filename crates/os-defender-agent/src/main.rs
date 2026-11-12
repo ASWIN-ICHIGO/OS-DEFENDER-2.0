@@ -730,6 +730,153 @@ fn process_response(state: &mut AgentState, alert: &Alert) {
     }
 }
 
+async fn run_ipc_server(state: Arc<Mutex<AgentState>>) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut listener = ipc::IpcListener::bind_default().await?;
+    #[cfg(not(target_os = "windows"))]
+    let listener = ipc::IpcListener::bind_default().await?;
+
+    loop {
+        let stream = listener.accept().await?;
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) = handle_ipc_client(stream, state).await {
+                warn!(%e, "ipc client error");
+            }
+        });
+    }
+}
+
+async fn handle_ipc_client(
+    stream: ipc::IpcStream,
+    state: Arc<Mutex<AgentState>>,
+) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut lines = BufReader::new(reader).lines();
+
+    while let Some(line) = lines.next_line().await? {
+        let request: ipc::IpcRequest = serde_json::from_str(&line)
+            .map_err(|e| anyhow::anyhow!("invalid request: {e}"))?;
+
+        let response = {
+            let mut s = state.lock().await;
+            handle_ipc_request(&mut s, request)
+        };
+
+        let payload = serde_json::to_string(&response)?;
+        writer.write_all(payload.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
+    }
+
+    Ok(())
+}
+
+fn handle_ipc_request(state: &mut AgentState, request: ipc::IpcRequest) -> ipc::IpcResponse {
+    match request {
+        ipc::IpcRequest::Status => {
+            let health = state.health.assess();
+            ipc::IpcResponse::Status {
+                events_processed: state.events_processed,
+                alerts_generated: state.alerts_generated,
+                actions_taken: state.actions_taken,
+                uptime_secs: state.health.uptime_secs(),
+                collectors_active: health.active_collectors,
+            }
+        }
+        ipc::IpcRequest::GetEvents { limit } => match state.store.recent_events(limit) {
+            Ok(events) => ipc::IpcResponse::Events(events),
+            Err(e) => ipc::IpcResponse::Error {
+                message: format!("failed to load events: {e}"),
+            },
+        },
+        ipc::IpcRequest::GetAlerts { limit } => match state.store.recent_alerts(limit) {
+            Ok(alerts) => ipc::IpcResponse::Alerts(alerts),
+            Err(e) => ipc::IpcResponse::Error {
+                message: format!("failed to load alerts: {e}"),
+            },
+        },
+        ipc::IpcRequest::GetHealth => {
+            let health = state.health.assess();
+            ipc::IpcResponse::Health {
+                overall_healthy: health.overall_healthy,
+                blind_spots: health.blind_spots.iter().map(|s| s.to_string()).collect(),
+                collectors: health
+                    .active_collectors
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect(),
+            }
+        }
+        ipc::IpcRequest::GetAuditLog { limit } => match state.audit.recent(&state.store.connection(), limit) {
+            Ok(entries) => ipc::IpcResponse::AuditLog(entries),
+            Err(e) => ipc::IpcResponse::Error {
+                message: format!("failed to load audit log: {e}"),
+            },
+        },
+        ipc::IpcRequest::GetPolicyMode => {
+            ipc::IpcResponse::PolicyMode(state.policy.mode().to_string())
+        }
+        ipc::IpcRequest::SetPolicyMode { mode } => {
+            state.policy.set_mode(mode);
+            ipc::IpcResponse::PolicyMode(state.policy.mode().to_string())
+        }
+        ipc::IpcRequest::VerifyAuditChain => match state.audit.verify_chain(&state.store.connection()) {
+            Ok(valid) => ipc::IpcResponse::AuditChainValid(valid),
+            Err(e) => ipc::IpcResponse::Error {
+                message: format!("chain verification failed: {e}"),
+            },
+        },
+        ipc::IpcRequest::GetAiStatus => {
+            let status = state.ai.status();
+            ipc::IpcResponse::AiStatus {
+                model_loaded: status.model_loaded,
+                baseline_learned: status.baseline_learned,
+                anomalies_detected: status.anomalies_detected,
+                drift_detected: status.drift_detected,
+            }
+        }
+        ipc::IpcRequest::ThreatHunt { query } => {
+            match os_defender_core::advanced::hunting::run_hunt(&state.store.connection(), &query) {
+                Ok(results) => ipc::IpcResponse::HuntResults(results),
+                Err(e) => ipc::IpcResponse::Error {
+                    message: format!("hunt failed: {e}"),
+                },
+            }
+        }
+        ipc::IpcRequest::GetPosture => match os_defender_core::advanced::posture::assess_posture() {
+            Ok(report) => ipc::IpcResponse::Posture(report),
+            Err(e) => ipc::IpcResponse::Error {
+                message: format!("posture assessment failed: {e}"),
+            },
+        },
+        ipc::IpcRequest::GetPersistence => {
+            match os_defender_core::advanced::persistence::scan_persistence() {
+                Ok(entries) => ipc::IpcResponse::Persistence(entries),
+                Err(e) => ipc::IpcResponse::Error {
+                    message: format!("persistence scan failed: {e}"),
+                },
+            }
+        }
+        ipc::IpcRequest::VerifyIntegrity => {
+            match os_defender_core::advanced::tamper::verify_self_integrity() {
+                Ok(report) => ipc::IpcResponse::Integrity(report),
+                Err(e) => ipc::IpcResponse::Error {
+                    message: format!("integrity check failed: {e}"),
+                },
+            }
+        }
+        ipc::IpcRequest::CheckUpdate => match os_defender_core::update::check_for_update() {
+            Ok(info) => ipc::IpcResponse::UpdateInfo(info),
+            Err(e) => ipc::IpcResponse::Error {
+                message: format!("update check failed: {e}"),
+            },
+        },
+    }
+}
+
 fn log_alert(alert: &Alert) {
     let factors: Vec<String> = alert
         .factors
