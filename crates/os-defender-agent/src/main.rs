@@ -6,9 +6,16 @@ use os_defender_core::{
     health::BlindSpotDetector,
     ipc,
     platform::{ProcessCollector, FileCollector, NetworkCollector, AuthCollector},
-    response::{AuditLog, PolicyEngine, PolicyMode, PolicyDecision},
+    response::{
+        AuditLog, PolicyEngine, PolicyMode, PolicyDecision, ResponseAction, ResponseActionKind,
+        enforce::{EnforcementResult, Enforcer, quarantine::FileQuarantine},
+    },
     storage::SqliteStore,
 };
+#[cfg(target_os = "linux")]
+use os_defender_core::response::enforce::nftables::NftablesEnforcer;
+#[cfg(target_os = "windows")]
+use os_defender_core::response::enforce::{job_object::JobObjectEnforcer, wfp::WfpEnforcer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -32,7 +39,7 @@ struct Args {
     #[arg(long, default_value = "/etc,/home")]
     watch_dirs: String,
 
-    #[arg(long, default_value = "dry_run")]
+    #[arg(long, default_value = "approve")]
     policy_mode: String,
 
     #[arg(long, default_value = "~/.local/share/os-defender/quarantine")]
@@ -49,10 +56,160 @@ struct AgentState {
     health: BlindSpotDetector,
     policy: PolicyEngine,
     audit: AuditLog,
+    dispatcher: ResponseDispatcher,
     ai: os_defender_core::advanced::ai_bridge::AiBridge,
     events_processed: u64,
     alerts_generated: u64,
     actions_taken: u64,
+}
+
+/// Executes response actions for real: kills/freezes processes, quarantines
+/// files, and blocks attacker IPs via the platform firewall.
+struct ResponseDispatcher {
+    quarantine: FileQuarantine,
+}
+
+impl ResponseDispatcher {
+    fn new(quarantine_dir: PathBuf, dry_run: bool) -> Self {
+        Self {
+            quarantine: FileQuarantine::new(quarantine_dir, dry_run),
+        }
+    }
+
+    fn execute(&self, action: &ResponseAction) -> EnforcementResult {
+        match action.kind {
+            ResponseActionKind::KillProcess => self.kill_process(&action.target),
+            ResponseActionKind::FreezeProcess => self.freeze_process(&action.target),
+            ResponseActionKind::QuarantineFile => {
+                if let Err(e) = self.quarantine.ensure_dir() {
+                    return EnforcementResult::fail(format!("quarantine dir unavailable: {e}"));
+                }
+                match self.quarantine.execute(&action.target, &action.reason) {
+                    Ok(r) => r,
+                    Err(e) => EnforcementResult::fail(format!("quarantine failed: {e}")),
+                }
+            }
+            ResponseActionKind::BlockIp => self.block_ip(&action.target),
+            ResponseActionKind::UnblockIp | ResponseActionKind::ThawProcess => {
+                EnforcementResult::ok_no_rollback(format!(
+                    "rollback action {} recorded (manual restoration required)",
+                    action.kind
+                ))
+            }
+            ResponseActionKind::RestoreFile => {
+                match self.quarantine.rollback(&action.target) {
+                    Ok(r) => r,
+                    Err(e) => EnforcementResult::fail(format!("restore failed: {e}")),
+                }
+            }
+        }
+    }
+
+    fn kill_process(&self, target: &str) -> EnforcementResult {
+        let pid: u32 = match target.parse() {
+            Ok(p) => p,
+            Err(_) => return EnforcementResult::fail(format!("invalid PID: {target}")),
+        };
+        if pid <= 4 {
+            return EnforcementResult::fail(format!(
+                "refusing to kill PID {pid} (system-critical)"
+            ));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            match std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    EnforcementResult::ok_no_rollback(format!("killed PID {pid} (taskkill /F /T)"))
+                }
+                Ok(o) => EnforcementResult::fail(format!(
+                    "taskkill failed for PID {pid}: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                )),
+                Err(e) => EnforcementResult::fail(format!("taskkill spawn failed: {e}")),
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            use nix::sys::signal::{Signal, kill};
+            use nix::unistd::Pid;
+            match kill(Pid::from_raw(pid as i32), Signal::SIGKILL) {
+                Ok(()) => EnforcementResult::ok_no_rollback(format!("killed PID {pid} (SIGKILL)")),
+                Err(e) => EnforcementResult::fail(format!("kill failed for PID {pid}: {e}")),
+            }
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = pid;
+            EnforcementResult::fail("process kill unsupported on this platform".into())
+        }
+    }
+
+    fn freeze_process(&self, target: &str) -> EnforcementResult {
+        #[cfg(target_os = "windows")]
+        {
+            match JobObjectEnforcer::new(false).execute(target, "freeze suspicious process") {
+                Ok(r) => r,
+                Err(e) => EnforcementResult::fail(format!("freeze failed: {e}")),
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            use nix::sys::signal::{Signal, kill};
+            use nix::unistd::Pid;
+            let pid: u32 = match target.parse() {
+                Ok(p) => p,
+                Err(_) => return EnforcementResult::fail(format!("invalid PID: {target}")),
+            };
+            if pid <= 4 {
+                return EnforcementResult::fail(format!(
+                    "refusing to freeze PID {pid} (system-critical)"
+                ));
+            }
+            match kill(Pid::from_raw(pid as i32), Signal::SIGSTOP) {
+                Ok(()) => {
+                    EnforcementResult::ok(format!("froze PID {pid} (SIGSTOP)"), format!("thaw:{pid}"))
+                }
+                Err(e) => EnforcementResult::fail(format!("freeze failed for PID {pid}: {e}")),
+            }
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = target;
+            EnforcementResult::fail("process freeze unsupported on this platform".into())
+        }
+    }
+
+    fn block_ip(&self, target: &str) -> EnforcementResult {
+        #[cfg(target_os = "windows")]
+        {
+            match WfpEnforcer::new(false).execute(target, "block attacker IP") {
+                Ok(r) => r,
+                Err(e) => EnforcementResult::fail(format!("firewall block failed: {e}")),
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            match NftablesEnforcer::new(false).execute(target, "block attacker IP") {
+                Ok(r) => r,
+                Err(e) => EnforcementResult::fail(format!("firewall block failed: {e}")),
+            }
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = target;
+            EnforcementResult::fail("firewall block unsupported on this platform".into())
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -154,6 +311,8 @@ fn init_agent(args: &Args) -> Result<Arc<Mutex<AgentState>>> {
     };
     let policy = PolicyEngine::new(policy_mode);
     let audit = AuditLog::recover_chain(&store.connection());
+    let dispatcher =
+        ResponseDispatcher::new(expand_tilde(&args.quarantine_dir), policy_mode == PolicyMode::DryRun);
 
     let ai_model_dir = db_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
     let ai = os_defender_core::advanced::ai_bridge::AiBridge::new(&ai_model_dir);
@@ -168,14 +327,13 @@ fn init_agent(args: &Args) -> Result<Arc<Mutex<AgentState>>> {
     info!(mode = %args.policy_mode, "policy engine initialized");
     info!(db = %db_path.display(), "database opened");
 
-    let _quarantine_dir = expand_tilde(&args.quarantine_dir);
-
     Ok(Arc::new(Mutex::new(AgentState {
         store,
         engine,
         health,
         policy,
         audit,
+        dispatcher,
         ai,
         events_processed: 0,
         alerts_generated: 0,
@@ -310,6 +468,10 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
 
         if tick.is_multiple_of(30) {
             let mut s = state.lock().await;
+            let tick_alerts = s.engine.tick();
+            for alert in tick_alerts {
+                handle_alert(&mut s, &alert);
+            }
             let assessment = s.health.assess();
             if !assessment.overall_healthy {
                 for spot in &assessment.blind_spots {
@@ -413,6 +575,10 @@ async fn run_windows_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64,
 
         if tick.is_multiple_of(30) {
             let mut s = state.lock().await;
+            let tick_alerts = s.engine.tick();
+            for alert in tick_alerts {
+                handle_alert(&mut s, &alert);
+            }
             let assessment = s.health.assess();
             if !assessment.overall_healthy {
                 for spot in &assessment.blind_spots {
@@ -441,12 +607,7 @@ fn ingest_events(state: &mut AgentState, events: Vec<NormalizedEvent>) {
         state.events_processed += 1;
 
         for alert in &alerts {
-            log_alert(alert);
-            if let Err(e) = state.store.insert_alert(alert) {
-                error!(%e, "failed to store alert");
-            }
-            state.alerts_generated += 1;
-            process_response(state, alert);
+            handle_alert(state, alert);
         }
     }
 
@@ -491,13 +652,17 @@ fn ingest_events(state: &mut AgentState, events: Vec<NormalizedEvent>) {
         alert.factors = factors;
         alert.mitre_techniques = vec!["TA0001".into()];
 
-        log_alert(&alert);
-        if let Err(e) = state.store.insert_alert(&alert) {
-            error!(%e, "failed to store AI alert");
-        }
-        state.alerts_generated += 1;
-        process_response(state, &alert);
+        handle_alert(state, &alert);
     }
+}
+
+fn handle_alert(state: &mut AgentState, alert: &Alert) {
+    log_alert(alert);
+    if let Err(e) = state.store.insert_alert(alert) {
+        error!(%e, "failed to store alert");
+    }
+    state.alerts_generated += 1;
+    process_response(state, alert);
 }
 
 fn process_response(state: &mut AgentState, alert: &Alert) {
@@ -520,12 +685,22 @@ fn process_response(state: &mut AgentState, alert: &Alert) {
 
         match result.decision {
             PolicyDecision::Execute => {
-                info!(
-                    action = %action_str,
-                    target = %target,
-                    decision = %decision_str,
-                    "response action EXECUTED"
-                );
+                let outcome = state.dispatcher.execute(&result.action);
+                if outcome.success {
+                    info!(
+                        action = %action_str,
+                        target = %target,
+                        detail = %outcome.detail,
+                        "response action EXECUTED"
+                    );
+                } else {
+                    warn!(
+                        action = %action_str,
+                        target = %target,
+                        detail = %outcome.detail,
+                        "response action FAILED"
+                    );
+                }
                 state.actions_taken += 1;
             }
             PolicyDecision::DryRun => {
@@ -559,217 +734,24 @@ fn log_alert(alert: &Alert) {
     let factors: Vec<String> = alert
         .factors
         .iter()
-        .map(|f| format!("{}={:.1}", f.name, f.weight))
+        .map(|f| format!("{}={:.2} ({})", f.name, f.weight, f.description))
         .collect();
-    let mitre = alert.mitre_techniques.join(",");
-
-    info!(
+    error!(
         alert_id = %alert.alert_id,
+        rule = alert.rule_id.as_deref().unwrap_or("ai"),
         severity = %alert.severity,
-        confidence = alert.confidence,
-        rule = alert.rule_id.as_deref().unwrap_or("-"),
-        mitre = %mitre,
-        factors = %factors.join("; "),
         title = %alert.title,
+        description = %alert.description,
+        confidence = alert.confidence,
+        mitre = ?alert.mitre_techniques,
+        factors = ?factors,
         "ALERT"
     );
 }
 
-async fn run_ipc_server(state: Arc<Mutex<AgentState>>) -> Result<()> {
-        #[cfg(target_os = "windows")]     let mut listener = ipc::IpcListener::bind_default().await?;     #[cfg(not(target_os = "windows"))]     let listener = ipc::IpcListener::bind_default().await?;
-
-    loop {
-        let stream = listener.accept().await?;
-        let state = Arc::clone(&state);
-
-        tokio::spawn(async move {
-            if let Err(e) = handle_ipc_client(stream, state).await {
-                error!(%e, "IPC client error");
-            }
-        });
-    }
-}
-
-async fn handle_ipc_client(
-    stream: ipc::IpcStream,
-    state: Arc<Mutex<AgentState>>,
-) -> Result<()> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-    let (reader, mut writer) = tokio::io::split(stream);
-    let mut lines = BufReader::new(reader).lines();
-
-    while let Some(line) = lines.next_line().await? {
-        let request: ipc::IpcRequest = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                let resp = ipc::IpcResponse::Error {
-                    message: format!("invalid request: {e}"),
-                };
-                let mut json = serde_json::to_string(&resp)?;
-                json.push('\n');
-                writer.write_all(json.as_bytes()).await?;
-                continue;
-            }
-        };
-
-        let response = match request {
-            ipc::IpcRequest::Status => {
-                let s = state.lock().await;
-                let collectors = if cfg!(target_os = "linux") {
-                    vec![
-                        "linux-process".into(),
-                        "linux-network".into(),
-                        "linux-auth".into(),
-                        "linux-file".into(),
-                    ]
-                } else if cfg!(target_os = "windows") {
-                    vec![
-                        "windows-process".into(),
-                        "windows-network".into(),
-                        "windows-auth".into(),
-                        "windows-file".into(),
-                    ]
-                } else {
-                    vec![]
-                };
-                ipc::IpcResponse::Status(ipc::AgentStatus {
-                    running: true,
-                    uptime_secs: 0,
-                    events_processed: s.events_processed,
-                    alerts_generated: s.alerts_generated,
-                    actions_taken: s.actions_taken,
-                    policy_mode: format!("{:?}", s.policy.mode()),
-                    collectors_active: collectors,
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                })
-            }
-            ipc::IpcRequest::GetEvents { limit } => {
-                let s = state.lock().await;
-                match s.store.get_events(limit) {
-                    Ok(events) => ipc::IpcResponse::Events(events),
-                    Err(e) => ipc::IpcResponse::Error {
-                        message: e.to_string(),
-                    },
-                }
-            }
-            ipc::IpcRequest::GetAlerts { limit } => {
-                let s = state.lock().await;
-                match s.store.get_alerts(limit) {
-                    Ok(alerts) => ipc::IpcResponse::Alerts(alerts),
-                    Err(e) => ipc::IpcResponse::Error {
-                        message: e.to_string(),
-                    },
-                }
-            }
-            ipc::IpcRequest::GetHealth => {
-                let mut s = state.lock().await;
-                let assessment = s.health.assess();
-                ipc::IpcResponse::Health(assessment)
-            }
-            ipc::IpcRequest::GetAuditLog { limit } => {
-                let s = state.lock().await;
-                match AuditLog::get_recent(&s.store.connection(), limit) {
-                    Ok(entries) => ipc::IpcResponse::AuditLog(entries),
-                    Err(e) => ipc::IpcResponse::Error {
-                        message: e.to_string(),
-                    },
-                }
-            }
-            ipc::IpcRequest::GetPolicyMode => {
-                let s = state.lock().await;
-                ipc::IpcResponse::PolicyMode(s.policy.mode())
-            }
-            ipc::IpcRequest::SetPolicyMode { mode } => {
-                let mut s = state.lock().await;
-                s.policy.set_mode(mode);
-                info!(mode = ?mode, "policy mode changed via IPC");
-                ipc::IpcResponse::Ok
-            }
-            ipc::IpcRequest::VerifyAuditChain => {
-                let s = state.lock().await;
-                match AuditLog::verify_chain(&s.store.connection()) {
-                    Ok((valid, entries)) => {
-                        ipc::IpcResponse::AuditChainStatus { valid, entries }
-                    }
-                    Err(e) => ipc::IpcResponse::Error {
-                        message: e.to_string(),
-                    },
-                }
-            }
-            ipc::IpcRequest::GetAiStatus => {
-                let s = state.lock().await;
-                ipc::IpcResponse::AiStatus(s.ai.status())
-            }
-            ipc::IpcRequest::ThreatHunt { ref query } => {
-                let s = state.lock().await;
-                match os_defender_core::advanced::hunting::HuntingEngine::execute(&s.store, query) {
-                    Ok(result) => ipc::IpcResponse::HuntResults(Box::new(result)),
-                    Err(e) => ipc::IpcResponse::Error { message: e.to_string() },
-                }
-            }
-            ipc::IpcRequest::GetPosture => {
-                let report = os_defender_core::advanced::posture::PostureAssessor::new("local").assess();
-                ipc::IpcResponse::PostureReport(Box::new(report))
-            }
-            ipc::IpcRequest::GetPersistence => {
-                #[cfg(target_os = "linux")]
-                {
-                    let scanner = os_defender_core::advanced::persistence::LinuxPersistenceScanner::new();
-                    let entries = scanner.scan();
-                    ipc::IpcResponse::PersistenceEntries(entries)
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    let scanner = os_defender_core::advanced::persistence::WindowsPersistenceScanner::new();
-                    let entries = scanner.scan();
-                    ipc::IpcResponse::PersistenceEntries(entries)
-                }
-                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-                {
-                    ipc::IpcResponse::PersistenceEntries(vec![])
-                }
-            }
-            ipc::IpcRequest::VerifyIntegrity => {
-                let tp = os_defender_core::advanced::tamper::TamperProtection::new(env!("CARGO_PKG_VERSION"));
-                let result = tp.verify();
-                ipc::IpcResponse::IntegrityStatus(Box::new(result))
-            }
-            ipc::IpcRequest::ScoreEvents { events } => {
-                let mut s = state.lock().await;
-                let result = s.ai.score_events(&events);
-                ipc::IpcResponse::AiScore(result)
-            }
-            ipc::IpcRequest::CheckUpdate => {
-                let checker = os_defender_core::update::UpdateChecker::new(
-                    env!("CARGO_PKG_VERSION"),
-                    os_defender_core::update::UpdateConfig::default(),
-                );
-                ipc::IpcResponse::UpdateInfo(checker.no_update_info())
-            }
-            ipc::IpcRequest::Shutdown => {
-                info!("shutdown requested via IPC");
-                ipc::IpcResponse::Ok
-            }
-        };
-
-        let mut json = serde_json::to_string(&response)?;
-        json.push('\n');
-        writer.write_all(json.as_bytes()).await?;
-    }
-
-    Ok(())
-}
-
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/")
-        && let Ok(home) = std::env::var("HOME")
-    {
-        return PathBuf::from(home).join(rest);
-    }
-    #[cfg(target_os = "windows")]
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Ok(home) = std::env::var("USERPROFILE")
+        && let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
     {
         return PathBuf::from(home).join(rest);
     }
