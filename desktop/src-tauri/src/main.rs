@@ -1,9 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Mutex;
+
 use serde_json::Value;
+use tauri::Manager;
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandChild;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use os_defender_core::ipc::{IpcRequest, IpcResponse, IpcStream};
+
+struct AgentChild(Mutex<Option<CommandChild>>);
 
 async fn send_request(request: &IpcRequest) -> Result<IpcResponse, String> {
     let stream = IpcStream::connect_default()
@@ -136,6 +143,26 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            let already_running = tauri::async_runtime::block_on(async {
+                IpcStream::connect_default().await.is_ok()
+            });
+            if !already_running {
+                match app.shell().sidecar("os-defender-agent") {
+                    Ok(sidecar) => match sidecar.spawn() {
+                        Ok((mut rx, child)) => {
+                            app.manage(AgentChild(Mutex::new(Some(child))));
+                            tauri::async_runtime::spawn(async move {
+                                while rx.recv().await.is_some() {}
+                            });
+                        }
+                        Err(e) => eprintln!("failed to spawn agent: {e}"),
+                    },
+                    Err(e) => eprintln!("agent sidecar not found: {e}"),
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_agent_status,
             get_events,
