@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
-use crate::events::{EventType, FileAction, NormalizedEvent, Severity};
+use uuid::Uuid;
+
 use crate::detection::{Alert, Rule};
+use crate::events::{EventType, FileAction, NormalizedEvent, Severity};
 
 // --- Canary file system ---
 
@@ -133,8 +135,19 @@ impl CanaryManager {
         &self.canaries
     }
 
+    pub fn forget(&mut self, path: &Path) {
+        self.canaries.retain(|c| c.path != path);
+    }
+
     pub fn is_canary_path(&self, path: &str) -> bool {
-        self.canaries.iter().any(|c| c.path.to_str() == Some(path))
+        let base = Path::new(path)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string());
+        self.canaries.iter().any(|c| {
+            c.path.to_str() == Some(path)
+                || (c.path.file_name().map(|f| f.to_string_lossy().to_string()) == base
+                    && base.is_some())
+        })
     }
 }
 
@@ -148,7 +161,10 @@ pub struct CanaryViolation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CanaryViolationKind {
     Deleted,
-    Modified { expected_hash: String, actual_hash: String },
+    Modified {
+        expected_hash: String,
+        actual_hash: String,
+    },
     Error(String),
 }
 
@@ -186,6 +202,7 @@ pub struct RansomwareDefenseRule {
     rapid_rename_threshold: usize,
     window_secs: i64,
     canary_manager: CanaryManager,
+    canaries_deployed: bool,
     known_ransom_extensions: Vec<&'static str>,
 }
 
@@ -204,11 +221,26 @@ impl RansomwareDefenseRule {
             rapid_rename_threshold: 15,
             window_secs: 10,
             canary_manager: CanaryManager::new(),
+            canaries_deployed: false,
             known_ransom_extensions: vec![
-                ".encrypted", ".locked", ".crypt", ".crypto",
-                ".enc", ".locky", ".cerber", ".zepto", ".thor",
-                ".aaa", ".abc", ".zzz", ".micro", ".pay",
-                ".ransom", ".r5a", ".WNCRY", ".wnry",
+                ".encrypted",
+                ".locked",
+                ".crypt",
+                ".crypto",
+                ".enc",
+                ".locky",
+                ".cerber",
+                ".zepto",
+                ".thor",
+                ".aaa",
+                ".abc",
+                ".zzz",
+                ".micro",
+                ".pay",
+                ".ransom",
+                ".r5a",
+                ".WNCRY",
+                ".wnry",
             ],
         }
     }
@@ -228,7 +260,11 @@ impl RansomwareDefenseRule {
         entry.retain(|t| *t > cutoff);
         let count = entry.len();
         gc_map(&mut self.mod_counts, cutoff);
-        if count >= self.rapid_mod_threshold { Some(count) } else { None }
+        if count >= self.rapid_mod_threshold {
+            Some(count)
+        } else {
+            None
+        }
     }
 
     fn track_renames(&mut self, dir: &str, ts: DateTime<Utc>) -> Option<usize> {
@@ -238,18 +274,36 @@ impl RansomwareDefenseRule {
         entry.retain(|t| *t > cutoff);
         let count = entry.len();
         gc_map(&mut self.rename_counts, cutoff);
-        if count >= self.rapid_rename_threshold { Some(count) } else { None }
+        if count >= self.rapid_rename_threshold {
+            Some(count)
+        } else {
+            None
+        }
     }
 
     fn has_ransom_extension(&self, path: &str) -> bool {
         let lower = path.to_lowercase();
-        self.known_ransom_extensions.iter().any(|ext| lower.ends_with(ext))
+        self.known_ransom_extensions
+            .iter()
+            .any(|ext| lower.ends_with(ext))
     }
 
     fn parent_dir(path: &str) -> &str {
-        path.rsplit_once('/').map(|(d, _)| d)
+        path.rsplit_once('/')
+            .map(|(d, _)| d)
             .or_else(|| path.rsplit_once('\\').map(|(d, _)| d))
             .unwrap_or(path)
+    }
+
+    fn canary_directories() -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let home = PathBuf::from(home);
+            dirs.push(home.clone());
+            dirs.push(home.join("Documents"));
+            dirs.push(home.join("Desktop"));
+        }
+        dirs
     }
 }
 
@@ -260,8 +314,50 @@ fn gc_map(map: &mut HashMap<String, Vec<DateTime<Utc>>>, cutoff: DateTime<Utc>) 
 }
 
 impl Rule for RansomwareDefenseRule {
-    fn id(&self) -> &str { "R006-ransomware-defense" }
-    fn name(&self) -> &str { "Ransomware Defense" }
+    fn id(&self) -> &str {
+        "R006-ransomware-defense"
+    }
+    fn name(&self) -> &str {
+        "Ransomware Defense"
+    }
+
+    fn tick(&mut self) -> Vec<Alert> {
+        if !self.canaries_deployed {
+            self.canaries_deployed = true;
+            let dirs = Self::canary_directories();
+            let dir_refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
+            match self.canary_manager.deploy(&dir_refs) {
+                Ok(deployed) if !deployed.is_empty() => {
+                    info!(count = deployed.len(), "ransomware canaries deployed");
+                }
+                Ok(_) => {}
+                Err(e) => warn!(%e, "canary deployment failed"),
+            }
+            return Vec::new();
+        }
+
+        let mut alerts = Vec::new();
+        for violation in self.canary_manager.verify_all() {
+            warn!(path = %violation.path.display(), "canary violation");
+            alerts.push(
+                Alert::from_rule(
+                    Uuid::new_v4(),
+                    self.id(),
+                    Severity::Critical,
+                    "Canary file tampered — possible ransomware".into(),
+                    format!(
+                        "Canary sentinel '{}' was compromised — high-confidence ransomware indicator",
+                        violation.path.display()
+                    ),
+                    0.95,
+                )
+                .with_factor("canary_hit", 1.0, "canary integrity check failed")
+                .with_mitre("T1486"),
+            );
+            self.canary_manager.forget(&violation.path);
+        }
+        alerts
+    }
 
     fn evaluate(&mut self, event: &NormalizedEvent) -> Option<Alert> {
         if event.event_type != EventType::File {
@@ -278,7 +374,10 @@ impl Rule for RansomwareDefenseRule {
                     self.id(),
                     Severity::Critical,
                     "Canary file tampered — possible ransomware".into(),
-                    format!("Canary sentinel '{}' was {:?} — high-confidence ransomware indicator", file.path, file.action),
+                    format!(
+                        "Canary sentinel '{}' was {:?} — high-confidence ransomware indicator",
+                        file.path, file.action
+                    ),
                     0.95,
                 )
                 .with_factor("canary_hit", 1.0, "canary file was touched")
@@ -294,7 +393,10 @@ impl Rule for RansomwareDefenseRule {
                     self.id(),
                     Severity::Critical,
                     format!("Ransomware extension detected: {}", file.path),
-                    format!("File renamed to known ransomware extension: '{}'", file.path),
+                    format!(
+                        "File renamed to known ransomware extension: '{}'",
+                        file.path
+                    ),
                     0.85,
                 )
                 .with_factor("ransom_extension", 1.0, "known ransomware file extension")
@@ -314,7 +416,10 @@ impl Rule for RansomwareDefenseRule {
                     self.id(),
                     Severity::Critical,
                     format!("Mass file rename in {dir}"),
-                    format!("{count} renames in {dir} within {}s — ransomware encryption pattern", self.window_secs),
+                    format!(
+                        "{count} renames in {dir} within {}s — ransomware encryption pattern",
+                        self.window_secs
+                    ),
                     0.80,
                 )
                 .with_factor("rename_rate", count as f64, "renames per window")
@@ -332,10 +437,17 @@ impl Rule for RansomwareDefenseRule {
                     self.id(),
                     Severity::Critical,
                     format!("Mass file modification in {dir}"),
-                    format!("{count} modifications in {dir} within {}s — possible ransomware", self.window_secs),
+                    format!(
+                        "{count} modifications in {dir} within {}s — possible ransomware",
+                        self.window_secs
+                    ),
                     0.75,
                 )
-                .with_factor("modification_rate", count as f64, "modifications per window")
+                .with_factor(
+                    "modification_rate",
+                    count as f64,
+                    "modifications per window",
+                )
                 .with_mitre("T1486"),
             );
         }
@@ -351,15 +463,16 @@ mod tests {
     use tempfile::TempDir;
 
     fn file_event(path: &str, action: FileAction) -> NormalizedEvent {
-        NormalizedEvent::new("ep".into(), OsType::Linux, EventType::File, Severity::Info)
-            .with_file(FileContext {
+        NormalizedEvent::new("ep".into(), OsType::Linux, EventType::File, Severity::Info).with_file(
+            FileContext {
                 path: path.into(),
                 action,
                 sha256: None,
                 size_bytes: None,
                 owner_uid: None,
                 permissions: None,
-            })
+            },
+        )
     }
 
     #[test]
@@ -370,7 +483,10 @@ mod tests {
         assert_eq!(deployed.len(), CANARY_NAMES.len());
 
         let violations = mgr.verify_all();
-        assert!(violations.is_empty(), "freshly deployed canaries should be clean");
+        assert!(
+            violations.is_empty(),
+            "freshly deployed canaries should be clean"
+        );
 
         // Tamper with one — remove readonly first
         let mut perms = fs::metadata(&deployed[0].path).unwrap().permissions();
@@ -383,7 +499,10 @@ mod tests {
         fs::write(&deployed[0].path, "ransomware was here").unwrap();
         let violations = mgr.verify_all();
         assert_eq!(violations.len(), 1);
-        assert!(matches!(violations[0].kind, CanaryViolationKind::Modified { .. }));
+        assert!(matches!(
+            violations[0].kind,
+            CanaryViolationKind::Modified { .. }
+        ));
     }
 
     #[test]
@@ -403,7 +522,10 @@ mod tests {
         assert!((shannon_entropy(b"aaaa") - 0.0).abs() < 0.001);
         let random_like: Vec<u8> = (0..=255).collect();
         let e = shannon_entropy(&random_like);
-        assert!(e > 7.9, "uniform distribution should have ~8 bits entropy, got {e}");
+        assert!(
+            e > 7.9,
+            "uniform distribution should have ~8 bits entropy, got {e}"
+        );
     }
 
     #[test]
