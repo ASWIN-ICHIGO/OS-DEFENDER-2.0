@@ -31,8 +31,7 @@ jobs:
       - name: Build .deb package
         run: |
           chmod +x installer/linux/build-deb.sh
-             VERSION="$(echo "${{ inputs.tag || github.ref_name }}" | sed 's/^v//')" 
-             ./installer/linux/build-deb.sh
+          VERSION="$(echo "${{ inputs.tag || github.ref_name }}" | sed 's/^v//')" ./installer/linux/build-deb.sh
       - name: Sign binaries
         if: env.SIGNING_PRIVATE_KEY != ''
         env:
@@ -182,13 +181,12 @@ jobs:
             os-defender-linux-deb/*.deb
             os-defender-linux-binaries/os-defender-agent
             os-defender-linux-binaries/os-defender
-            os-defender-linux-binaries/*.sha256
-            os-defender-linux-desktop/*.deb
-            os-defender-linux-desktop/*.AppImage
+            os-defender-linux-desktop/**/*.deb
+            os-defender-linux-desktop/**/*.AppImage
             os-defender-windows-binaries/os-defender-agent.exe
             os-defender-windows-binaries/os-defender.exe
             os-defender-windows-binaries/*.sha256
-            os-defender-windows-desktop/*.exe
-            os-defender-windows-desktop/*.msi
+            os-defender-windows-desktop/**/*.exe
+            os-defender-windows-desktop/**/*.msi
             os-defender-ai-layer/ai-layer.tar.gz
           generate_release_notes: true
