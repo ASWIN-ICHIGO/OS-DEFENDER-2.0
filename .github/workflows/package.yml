@@ -31,7 +31,8 @@ jobs:
       - name: Build .deb package
         run: |
           chmod +x installer/linux/build-deb.sh
-          VERSION="${GITHUB_REF_NAME#v}" ./installer/linux/build-deb.sh
+             VERSION="$(echo "${{ inputs.tag || github.ref_name }}" | sed 's/^v//')" 
+             ./installer/linux/build-deb.sh
       - name: Sign binaries
         if: env.SIGNING_PRIVATE_KEY != ''
         env:
