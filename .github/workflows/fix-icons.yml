@@ -1,0 +1,36 @@
+name: Fix Icons
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix-icons:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Pillow
+        run: pip install pillow
+      - name: Generate icon.ico and icon.icns from new logo
+        run: |
+          python - <<'EOF'
+          from PIL import Image
+          img = Image.open("desktop/src-tauri/icons/128x128@2x.png").convert("RGBA")
+          img.save(
+              "desktop/src-tauri/icons/icon.ico",
+              sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+          )
+          img.save("desktop/src-tauri/icons/icon.icns", format="ICNS")
+          print("icons generated")
+          EOF
+      - name: Commit updated icons
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add desktop/src-tauri/icons
+          git diff --cached --quiet || git commit -m "Update icon.ico and icon.icns from new shield logo"
+          git push
