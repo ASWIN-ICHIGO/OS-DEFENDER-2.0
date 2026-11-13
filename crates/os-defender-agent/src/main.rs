@@ -384,10 +384,19 @@ async fn run_linux_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64, w
     let mut network_collector = LinuxNetworkCollector::new(endpoint_id.clone());
     let mut auth_collector = LinuxAuthCollector::new(endpoint_id.clone());
 
+    let mut dirs: Vec<String> = watch_dirs
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if let Some(dl) = download_dir() {
+        dirs.push(dl);
+    }
+
     let mut file_collector = match LinuxFileCollector::new(endpoint_id.clone()) {
         Ok(mut fc) => {
-            for dir in watch_dirs.split(',') {
-                let path = std::path::Path::new(dir.trim());
+            for dir in &dirs {
+                let path = std::path::Path::new(dir);
                 if path.is_dir() {
                     match fc.watch_path(path) {
                         Ok(()) => info!(dir = %path.display(), "watching directory"),
@@ -506,9 +515,18 @@ async fn run_windows_collectors(state: Arc<Mutex<AgentState>>, interval_ms: u64,
     let mut network_collector = WindowsNetworkCollector::new(endpoint_id.clone());
     let mut auth_collector = WindowsAuthCollector::new(endpoint_id.clone());
 
+    let mut dirs: Vec<String> = watch_dirs
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if let Some(dl) = download_dir() {
+        dirs.push(dl);
+    }
+
     let mut file_collector = match WindowsFileCollector::new(endpoint_id.clone()) {
         Ok(mut fc) => {
-            for dir in watch_dirs.split(',') {
+            for dir in &dirs {
                 let trimmed = dir.trim();
                 if std::path::Path::new(trimmed).is_dir() {
                     match fc.watch_path(std::path::Path::new(trimmed)) {
@@ -914,6 +932,16 @@ async fn handle_ipc_client(
     }
 
     Ok(())
+}
+
+/// The user's Downloads folder — new browser downloads land here and get
+/// signature-scanned immediately by SIG-001.
+fn download_dir() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    let home = std::env::var("USERPROFILE").ok();
+    #[cfg(not(target_os = "windows"))]
+    let home = std::env::var("HOME").ok();
+    home.map(|h| format!("{h}/Downloads"))
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
